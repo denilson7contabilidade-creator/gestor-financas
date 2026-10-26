@@ -1,7 +1,7 @@
 "use strict";
 /* Gestor de Finanças — app instalável, dados guardados só no aparelho e criptografados. */
 
-const VERSAO_APP = "1.9";
+const VERSAO_APP = "2.0";
 const $ = (s, el = document) => el.querySelector(s);
 const esc = (t) => String(t ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const ic = (n) => `<svg class="ic" viewBox="0 0 24 24">${ICONES[n] || ICONES["circle-ellipsis"]}</svg>`;
@@ -527,9 +527,26 @@ function telaLogin(modo) {
   app.querySelectorAll("[data-instalar]").forEach((b) => (b.onclick = instalarApp));
 }
 
+// Faixa "Instalar app", que pode ser dispensada no X
+function faixaInstalar(texto, estilo = "") {
+  let dispensado = false;
+  try { dispensado = localStorage.getItem("gf_sem_banner") === "1"; } catch {}
+  if (instalado() || !pedidoInstalar || dispensado) return "";
+  return `<div class="instalar" style="${estilo}"><img src="icons/icon-192.png" alt=""><span>${texto}</span><button data-instalar>Instalar</button>
+    <button class="instalar-x" data-fechar-banner aria-label="Fechar">${ic("x")}</button></div>`;
+}
+document.addEventListener("click", (e) => {
+  const x = e.target.closest("[data-fechar-banner]");
+  if (!x) return;
+  e.stopPropagation();
+  try { localStorage.setItem("gf_sem_banner", "1"); } catch {}
+  x.closest(".instalar").remove();
+  aviso("Tudo bem. Para instalar depois, use o menu ⋮ do Chrome → Instalar app.");
+}, true);
+
 function bannerInstalar() {
   if (instalado() || !pedidoInstalar) return "";
-  return `<div class="instalar" style="margin:20px 0 0"><img src="icons/icon-192.png" alt=""><span>Instale o app para ter o ícone na tela inicial.</span><button data-instalar>Instalar</button></div>`;
+  return faixaInstalar("Instale o app para ter o ícone na tela inicial.", "margin:20px 0 0");
 }
 async function instalarApp() {
   if (!pedidoInstalar) return aviso("No Chrome, toque em ⋮ e depois em “Instalar app”.");
@@ -622,7 +639,7 @@ function telaInicio() {
         <button class="faixa-it" data-aba="relatorios">${ic("wallet")}<span>Nas contas hoje</span><b class="num">${fmtR(saldoReal)}</b></button>
         ${t.cart ? `<div class="faixa-it">${ic("credit-card")}<span>No cartão no mês</span><b class="num">${fmtR(t.cart)}</b></div>` : ""}
       </div>
-    </header>${!instalado() && pedidoInstalar ? `<div class="instalar"><img src="icons/icon-192.png" alt=""><span>Instale o app na tela inicial.</span><button data-instalar>Instalar</button></div>` : ""}
+    </header>${faixaInstalar("Instale o app na tela inicial.")}
     <div class="conteudo" id="lista">${corpo}</div>`;
 }
 
@@ -941,7 +958,7 @@ function telaPerfil() {
   const op = (dado, icone, tit, sub) => `<button class="linha-opc" data-op="${dado}"><span class="bola">${ic(icone)}</span><span class="meio">${tit}${sub ? `<small>${sub}</small>` : ""}</span><span class="seta">${ic("chevron-right")}</span></button>`;
   return `<header class="cab"><div class="perfil-topo"><div class="avatar">${esc(u.nome.slice(0, 1).toUpperCase())}</div>
       <div><b style="font-size:18px">${esc(u.nome)}</b><br><small style="color:rgba(0,0,0,.68)">usuário: ${esc(u.login)}</small></div></div></header>
-    <div class="conteudo">${!instalado() && pedidoInstalar ? `<div class="instalar"><img src="icons/icon-192.png" alt=""><span>Instale o app na tela inicial.</span><button data-instalar>Instalar</button></div>` : ""}
+    <div class="conteudo">${faixaInstalar("Instale o app na tela inicial.")}
     <section class="secao"><h2>Cadastros</h2><div class="cartao-box">
       ${op("categorias", "tag", "Categorias", `${S.d.categorias.length} categorias`)}
       ${op("contas", "wallet", "Contas", "Onde fica seu dinheiro (banco, carteira…)")}
@@ -1104,24 +1121,48 @@ function abrirEditor(l, opc = {}) {
 
   // Repetir todo mês (lançamento recorrente)
   const btRep = $("[data-repetirmes]", el);
-  const txtRep = (n) => (n === -1 ? "Todo mês" : n > 0 ? `${n} meses` : "Repetir");
+  const txtRep = (n) => (n === -1 ? "Todo mês" : n > 0 ? `${n}x` : "Repetir");
   function pintarRepetir() {
     const pode = !editando && !opc.fixo && E.tipo !== "transf" && E.parcelas === 1;
     btRep.hidden = !pode;
     btRep.classList.toggle("ativo", !!E.repetir);
     btRep.innerHTML = `${ic("repeat")}<span>${txtRep(E.repetir)}</span>`;
   }
-  btRep.onclick = async () => {
-    const dia = Number(E.data.slice(8));
-    const v = await escolher("Repetir", [
-      { valor: "0", rotulo: "Não repetir", icone: "x" },
-      { valor: "-1", rotulo: "Todo mês, sem data para acabar", icone: "repeat", sub: `Aluguel, salário, internet… todo dia ${dia}` },
-      ...[3, 6, 10, 12, 24].map((n) => ({ valor: String(n), rotulo: `Todo mês, por ${n} meses`, icone: "calendar-clock", sub: `Até ${nomeMes(somaMes(E.data.slice(0, 7), n - 1))}` })),
-    ], String(E.repetir));
-    if (v === null) return;
-    E.repetir = Number(v);
-    if (E.repetir) aviso("Nos próximos meses ele aparece em “Fixos a confirmar”, no Início.");
-    pintarChips();
+  btRep.onclick = () => {
+    const dia = Number(E.data.slice(8)), mesIni = E.data.slice(0, 7);
+    const qtdIni = E.repetir > 0 ? E.repetir : 12;
+    const sh = abrirCamada(`<h2>Repetir todo mês</h2>
+      <p style="text-align:center;color:#666;margin:-6px 0 14px;font-size:14px">Nos próximos meses ele aparece em “Fixos a confirmar”, no Início, todo dia ${dia}.</p>
+      <div class="lista-escolha">
+        <button data-rop="0" class="${!E.repetir ? "sel" : ""}"><span class="bola">${ic("x")}</span><span>Não repetir</span>${!E.repetir ? `<span class="ok">${ic("check")}</span>` : ""}</button>
+        <button data-rop="-1" class="${E.repetir === -1 ? "sel" : ""}"><span class="bola">${ic("repeat")}</span><span>Sem prazo<br><small style="color:#777">Aluguel, salário, internet… até você parar</small></span>${E.repetir === -1 ? `<span class="ok">${ic("check")}</span>` : ""}</button>
+      </div>
+      <div class="rep-qtd ${E.repetir > 0 ? "sel" : ""}">
+        <div class="rep-qtd-l"><span class="bola">${ic("calendar-clock")}</span><b>Por quantos meses?</b></div>
+        <div class="rep-qtd-c">
+          <button type="button" data-menos aria-label="Menos">−</button>
+          <input data-qtd type="number" inputmode="numeric" min="2" max="120" value="${qtdIni}">
+          <button type="button" data-mais aria-label="Mais">+</button>
+          <span>meses</span>
+        </div>
+        <small data-ate></small>
+        <button class="btn preto" data-usar style="margin-top:12px">Repetir por <span data-n>${qtdIni}</span> meses</button>
+      </div>`);
+    const inp = $("[data-qtd]", sh);
+    const val = () => Math.max(2, Math.min(120, Math.round(Number(inp.value) || 2)));
+    const atualizar = () => {
+      const n = val();
+      $("[data-ate]", sh).textContent = `Este mês e mais ${n - 1} — até ${nomeMes(somaMes(mesIni, n - 1))}.`;
+      $("[data-n]", sh).textContent = n;
+    };
+    inp.oninput = atualizar;
+    inp.onblur = () => { inp.value = val(); atualizar(); };
+    $("[data-menos]", sh).onclick = () => { inp.value = val() - 1; inp.value = val(); atualizar(); };
+    $("[data-mais]", sh).onclick = () => { inp.value = val() + 1; inp.value = val(); atualizar(); };
+    atualizar();
+    const usar = (n) => { E.repetir = n; pintarChips(); fechar(); if (n) aviso(n === -1 ? "Vai repetir todo mês, sem prazo." : `Vai repetir por ${n} meses.`); };
+    sh.querySelectorAll("[data-rop]").forEach((b) => (b.onclick = () => usar(Number(b.dataset.rop))));
+    $("[data-usar]", sh).onclick = () => usar(val());
   };
 
   // Calculadora: aceita "12+4,50-3"

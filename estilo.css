@@ -369,3 +369,37 @@ html[data-contraste="claro"] .login .opcoes .link { color: #fff; }
 html[data-contraste="claro"] .login form, html[data-contraste="claro"] .faixa-it { color: var(--preto); }
 html[data-contraste="claro"] .avatar { background: #fff; color: #111; }
 html[data-contraste="claro"] .busca-cab > button { color: #fff; }
+
+/* ----- v2.0: acabamento ----- */
+/* 1. No computador, fundo neutro nas laterais */
+@media (min-width: 600px) {
+  body { background: #ECECEC; }
+  #app { box-shadow: 0 0 40px rgba(0,0,0,.08); }
+}
+/* 2. Abas não escolhidas com fundo próprio (claro ou escuro conforme o tema) */
+.cab .alternar button:not(.ativo), .add-cab .alternar button:not(.ativo), .topo .alternar button:not(.ativo) { background: rgba(0,0,0,.10); }
+html[data-contraste="claro"] .cab .alternar button:not(.ativo), html[data-contraste="claro"] .add-cab .alternar button:not(.ativo) { background: rgba(255,255,255,.16); }
+/* 3. X para dispensar a faixa de instalação */
+.instalar .instalar-x { margin-left: 4px; background: transparent; color: #fff; padding: 6px; width: 32px; height: 32px; display: grid; place-items: center; }
+.instalar .instalar-x svg.ic { width: 18px; height: 18px; }
+/* 4. Menu de baixo: pílula atrás do ícone da tela atual */
+.nav button svg.ic { padding: 4px 16px; box-sizing: content-box; border-radius: 99px; transition: background .15s; }
+.nav button.ativo svg.ic { background: var(--fundo-suave); }
+.nav button.ativo { color: var(--preto); }
+/* 5. Títulos dos quadros do relatório mais fortes */
+.pesa > small { font-weight: 600; color: #555; }
+/* 6. Botões perto do teclado com cara de botão */
+.chip { border: 1.5px solid #BDBDBD; }
+.chip.cartao { border-color: var(--preto); }
+.bt-repetir { background: var(--branco); border: 1.5px solid #9E9E9E; }
+.bt-repetir.ativo { border-color: var(--preto); }
+.teclado .data { background: var(--fundo-suave); font-weight: 600; box-shadow: inset 0 0 0 1.5px rgba(0,0,0,.12); }
+/* Repetir: quantidade editável */
+.rep-qtd { margin-top: 12px; border: 1.5px solid #E2E2E2; border-radius: 16px; padding: 12px; }
+.rep-qtd.sel { border-color: var(--preto); }
+.rep-qtd-l { display: flex; align-items: center; gap: 14px; }
+.rep-qtd-c { display: flex; align-items: center; gap: 8px; margin: 12px 0 6px; }
+.rep-qtd-c button { width: 46px; height: 46px; border-radius: 12px; background: var(--cinza-claro); font-size: 24px; flex: none; }
+.rep-qtd-c input { width: 80px; text-align: center; font-size: 20px; font-weight: 700; padding: 9px 4px; }
+.rep-qtd-c span { color: var(--cinza); }
+.rep-qtd small { color: var(--cinza); font-size: 13px; }
