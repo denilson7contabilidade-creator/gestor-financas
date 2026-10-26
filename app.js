@@ -1,7 +1,7 @@
 "use strict";
 /* Gestor de Finanças — app instalável, dados guardados só no aparelho e criptografados. */
 
-const VERSAO_APP = "1.7";
+const VERSAO_APP = "1.8";
 const $ = (s, el = document) => el.querySelector(s);
 const esc = (t) => String(t ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const ic = (n) => `<svg class="ic" viewBox="0 0 24 24">${ICONES[n] || ICONES["circle-ellipsis"]}</svg>`;
@@ -996,8 +996,8 @@ function abrirEditor(l, opc = {}) {
       }));
       return;
     }
-    // Mais usadas primeiro; mostra só as 12 principais até tocar em "Todas"
-    const cats = categoriasPorUso(E.tipo);
+    // Na ordem escolhida em Perfil → Categorias; mostra as 12 primeiras até tocar em "Todas"
+    const cats = S.d.categorias.filter((c) => c.tipo === E.tipo);
     const LIM = 12;
     let mostrar = cats;
     if (!todasCats && cats.length > LIM + 1) {
@@ -1005,7 +1005,8 @@ function abrirEditor(l, opc = {}) {
       const sel = cats.find((c) => c.id === E.cat);
       if (sel && !mostrar.includes(sel)) mostrar = [...cats.slice(0, LIM - 1), sel];
     }
-    const mais = mostrar.length < cats.length ? `<button data-todas><span class="bola">${ic("circle-ellipsis")}</span>Todas (${cats.length})</button>` : "";
+    const mais = mostrar.length < cats.length ? `<button data-todas><span class="bola">${ic("circle-ellipsis")}</span>Todas (${cats.length})</button>`
+      : `<button data-organizar><span class="bola">${ic("arrow-up-down")}</span>Organizar</button>`;
     corpo.innerHTML = cats.length
       ? `<div class="grade-cat">${mostrar.map((c) => `<button data-c="${c.id}" class="${E.cat === c.id ? "sel" : ""}">${bola(c.icone, c.cor)}${esc(c.nome)}</button>`).join("")}${mais}</div>`
       : `<div class="vazio">${ic("tag")}Nenhuma categoria de ${E.tipo}.<br>Crie em <b>Perfil → Categorias</b>.</div>`;
@@ -1015,6 +1016,8 @@ function abrirEditor(l, opc = {}) {
     }));
     const bt = $("[data-todas]", corpo);
     if (bt) bt.onclick = () => { todasCats = true; pintarCorpo(); };
+    const org = $("[data-organizar]", corpo);
+    if (org) org.onclick = () => gerirCategorias(() => { todasCats = false; pintarCorpo(); });
   }
 
   function pintarChips() {
@@ -1183,15 +1186,6 @@ function abrirEditor(l, opc = {}) {
   pintarTipos(); pintarCorpo(); pintarChips(); pintarVisor(); pintarData();
 }
 
-// Categorias ordenadas pelo uso nos últimos 120 dias (empate: ordem do cadastro)
-function categoriasPorUso(tipo) {
-  const lim = (() => { const d = new Date(); d.setDate(d.getDate() - 120); return `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())}`; })();
-  const uso = {};
-  for (const l of S.d.lancs) if (l.tipo === tipo && l.cat && l.data >= lim) uso[l.cat] = (uso[l.cat] || 0) + 1;
-  const cats = S.d.categorias.filter((c) => c.tipo === tipo);
-  return cats.map((c, i) => ({ c, i, n: uso[c.id] || 0 })).sort((a, b) => b.n - a.n || a.i - b.i).map((x) => x.c);
-}
-
 /* ================= LANÇAMENTOS FIXOS ================= */
 
 const fixoPorId = (id) => S.d.fixos.find((f) => f.id === id);
@@ -1288,20 +1282,83 @@ function abrirBusca() {
 
 /* ================= CADASTROS ================= */
 
-function gerirCategorias() {
+function gerirCategorias(depois) {
   let tipo = "despesa";
-  const el = abrirCamada(`<div data-c></div>`, { aoFechar: () => desenhar() });
+  const el = abrirCamada(`<div data-c></div>`, { aoFechar: () => { desenhar(); depois && depois(); } });
   const pintar = () => {
     const cats = S.d.categorias.filter((c) => c.tipo === tipo);
-    $("[data-c]", el).innerHTML = `<h2>Categorias</h2><div class="alternar" style="margin:0 auto 12px">
+    $("[data-c]", el).innerHTML = `<h2>Categorias</h2><div class="alternar" style="margin:0 auto 10px">
       <button data-t="despesa" class="${tipo === "despesa" ? "ativo" : ""}">Despesas</button><button data-t="receita" class="${tipo === "receita" ? "ativo" : ""}">Receitas</button></div>
-      <div class="lista-escolha">${cats.map((c) => `<button data-e="${c.id}">${bola(c.icone, c.cor)}<span>${esc(c.nome)}</span><span class="ok">${ic("pencil")}</span></button>`).join("")}
-      <button data-nova><span class="bola">${ic("plus")}</span><b>Nova categoria</b></button></div>`;
+      <p class="dica-ordem">${ic("grip-vertical")} Segure e arraste pelos pontinhos para mudar a ordem. As primeiras aparecem primeiro na hora de lançar.</p>
+      <button class="nova-cat" data-nova><span class="bola">${ic("plus")}</span><b>Nova categoria</b></button>
+      <div class="lista-ordem" data-lista>${cats.map((c) => `<div class="ordem-l" data-id="${c.id}">
+        <button class="ordem-ed" data-e="${c.id}">${bola(c.icone, c.cor)}<span>${esc(c.nome)}</span></button>
+        <span class="ordem-pega" data-arrastar aria-label="Arrastar">${ic("grip-vertical")}</span></div>`).join("")}</div>`;
     el.querySelectorAll("[data-t]").forEach((b) => (b.onclick = () => { tipo = b.dataset.t; pintar(); }));
     el.querySelectorAll("[data-e]").forEach((b) => (b.onclick = () => editarCategoria(S.d.categorias.find((c) => c.id === b.dataset.e), tipo, pintar)));
     $("[data-nova]", el).onclick = () => editarCategoria(null, tipo, pintar);
+    ordenavel($("[data-lista]", el), async (de, para) => {
+      const lista = S.d.categorias.filter((c) => c.tipo === tipo);
+      const [mov] = lista.splice(de, 1);
+      lista.splice(para, 0, mov);
+      const outras = S.d.categorias.filter((c) => c.tipo !== tipo);
+      S.d.categorias = tipo === "despesa" ? [...lista, ...outras] : [...outras, ...lista];
+      await salvar();
+      pintar();
+    });
   };
   pintar();
+}
+
+// Arrastar para reordenar (funciona com o dedo e com o mouse)
+function ordenavel(lista, aoSoltar) {
+  lista.querySelectorAll("[data-arrastar]").forEach((h) => (h.onpointerdown = (e) => {
+    e.preventDefault();
+    const item = h.closest("[data-id]");
+    const itens = [...lista.querySelectorAll("[data-id]")];
+    const rolavel = lista.closest(".folha") || document.scrollingElement;
+    const alt = item.offsetHeight;
+    const ini = itens.indexOf(item);
+    const y0 = e.clientY, s0 = rolavel.scrollTop;
+    let alvo = ini, ultY = e.clientY, rolar = 0, raf = 0;
+    try { h.setPointerCapture(e.pointerId); } catch {}
+    item.classList.add("arrastando");
+    lista.classList.add("ordenando");
+    const atualizar = () => {
+      const dy = ultY - y0 + (rolavel.scrollTop - s0);
+      item.style.transform = `translateY(${dy}px)`;
+      alvo = Math.max(0, Math.min(itens.length - 1, ini + Math.round(dy / alt)));
+      itens.forEach((it, i) => {
+        if (it === item) return;
+        let d = 0;
+        if (ini < alvo && i > ini && i <= alvo) d = -alt;
+        if (ini > alvo && i < ini && i >= alvo) d = alt;
+        it.style.transform = d ? `translateY(${d}px)` : "";
+      });
+    };
+    const loop = () => {
+      if (rolar) { rolavel.scrollTop += rolar; atualizar(); }
+      raf = requestAnimationFrame(loop);
+    };
+    raf = requestAnimationFrame(loop);
+    h.onpointermove = (ev) => {
+      ultY = ev.clientY;
+      const r = rolavel.getBoundingClientRect ? rolavel.getBoundingClientRect() : { top: 0, bottom: innerHeight };
+      const topo = Math.max(r.top, 0), base = Math.min(r.bottom, innerHeight);
+      rolar = ev.clientY < topo + 70 ? -7 : ev.clientY > base - 70 ? 7 : 0;
+      atualizar();
+    };
+    const fim = () => {
+      cancelAnimationFrame(raf);
+      h.onpointermove = h.onpointerup = h.onpointercancel = null;
+      itens.forEach((it) => (it.style.transform = ""));
+      item.classList.remove("arrastando");
+      lista.classList.remove("ordenando");
+      if (alvo !== ini) aoSoltar(ini, alvo);
+    };
+    h.onpointerup = fim;
+    h.onpointercancel = fim;
+  }));
 }
 
 function editarCategoria(c, tipo, depois) {
@@ -1326,7 +1383,11 @@ function editarCategoria(c, tipo, depois) {
     if (!nome) return;
     let alvo = c;
     if (c) { Object.assign(c, { nome, icone }); if (cor) c.cor = cor; else delete c.cor; }
-    else { alvo = { id: novoId(), tipo, nome, icone }; if (cor) alvo.cor = cor; S.d.categorias.push(alvo); }
+    else {
+      alvo = { id: novoId(), tipo, nome, icone }; if (cor) alvo.cor = cor;
+      const i = S.d.categorias.findIndex((x) => x.tipo === tipo);
+      S.d.categorias.splice(i < 0 ? S.d.categorias.length : i, 0, alvo); // entra no topo
+    }
     await salvar(); fechar(); aviso("Categoria salva.");
     setTimeout(() => depois && depois(alvo), 0);
   };

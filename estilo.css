@@ -332,3 +332,16 @@ i.d { background: var(--laranja-graf); }
 .pct-t span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pct-b { height: 4px; background: #F3F0ED; border-radius: 9px; margin-top: 2px; overflow: hidden; }
 .pct-b i { display: block; height: 100%; border-radius: 9px; }
+
+/* ----- v1.8: ordenar categorias ----- */
+.dica-ordem { display: flex; align-items: center; gap: 8px; font-size: 13px; color: #666; background: var(--fundo-suave); border-radius: 12px; padding: 9px 12px; margin: 0 0 8px; }
+.dica-ordem svg.ic { width: 18px; height: 18px; flex: none; }
+.nova-cat { display: flex; align-items: center; gap: 14px; padding: 12px 4px; width: 100%; text-align: left; border-bottom: 1px solid var(--linha); }
+.lista-ordem { position: relative; }
+.ordem-l { display: flex; align-items: center; background: var(--branco); border-bottom: 1px solid var(--linha); position: relative; }
+.lista-ordem.ordenando .ordem-l { transition: transform .15s ease; }
+.lista-ordem.ordenando .ordem-l.arrastando { transition: none; z-index: 5; box-shadow: 0 8px 24px rgba(0,0,0,.18); border-radius: 12px; background: #fff; }
+.ordem-ed { flex: 1; min-width: 0; display: flex; align-items: center; gap: 14px; padding: 12px 4px; text-align: left; }
+.ordem-ed span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ordem-pega { width: 48px; height: 52px; display: grid; place-items: center; color: #999; touch-action: none; cursor: grab; flex: none; }
+.ordem-pega svg.ic { width: 22px; height: 22px; }
