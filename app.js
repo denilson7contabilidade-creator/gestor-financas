@@ -1,7 +1,7 @@
 "use strict";
 /* Gestor de Finanças — app instalável, dados guardados só no aparelho e criptografados. */
 
-const VERSAO_APP = "2.0";
+const VERSAO_APP = "2.1";
 const $ = (s, el = document) => el.querySelector(s);
 const esc = (t) => String(t ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const ic = (n) => `<svg class="ic" viewBox="0 0 24 24">${ICONES[n] || ICONES["circle-ellipsis"]}</svg>`;
@@ -736,9 +736,9 @@ function telaGraficos() {
   const max = ordem.length ? ordem[0][1] : 1;
   const linhas = ordem.map(([id, v]) => {
     const c = cat(id);
-    return `<div class="cat-linha">${bola(c.icone, c.cor)}<div class="meio">
+    return `<button class="cat-linha" data-vercat="${id}">${bola(c.icone, c.cor)}<div class="meio">
       <div class="topo2"><span>${esc(c.nome)}</span><b class="num">${fmt(v)}</b></div>
-      <div class="barra"><i style="width:${(v / max) * 72}%"></i><span>${pctTxt(v)}</span></div></div></div>`;
+      <div class="barra"><i style="width:${(v / max) * 72}%"></i><span>${pctTxt(v)}</span></div></div><span class="seta">${ic("chevron-right")}</span></button>`;
   }).join("");
 
   return `<header class="cab"><div class="alternar">
@@ -754,9 +754,62 @@ function telaGraficos() {
 ligar.graficos = () => {
   document.querySelectorAll("[data-gt]").forEach((b) => (b.onclick = () => { S.graf.tipo = b.dataset.gt; desenhar(); }));
   document.querySelectorAll("[data-gm]").forEach((b) => (b.onclick = () => { S.graf.mes = b.dataset.gm; desenhar(); }));
+  document.querySelectorAll("[data-vercat]").forEach((b) => (b.onclick = () => verCategoria(b.dataset.vercat, S.graf.mes)));
   const rol = $("#rol"), at = $("#rol .ativo");
   if (rol && at) rol.scrollLeft = at.offsetLeft - rol.clientWidth / 2 + at.clientWidth / 2;
 };
+
+/* ----- Detalhe de uma categoria (ao tocar nos gráficos) ----- */
+function verCategoria(cid, ymIni) {
+  let ym = ymIni || mesAtual(), ordem = "valor";
+  const c = cat(cid);
+  const el = abrirCamada(`<div class="cab det-cab"><button data-x aria-label="Voltar">${ic("arrow-left")}</button>
+      <b>${esc(c.nome)}</b><button class="det-mes" data-mesdet></button></div>
+    <div class="det-corpo" data-detcat></div>`, { tela: true });
+  $("[data-x]", el).onclick = () => fechar();
+  $("[data-mesdet]", el).onclick = async () => { const m = await escolherMes(ym); if (m) { ym = m; pintar(); } };
+  const pintar = () => {
+    $("[data-mesdet]", el).innerHTML = `${nomeMes(ym)} ▾`;
+    const itens = S.d.lancs.filter((l) => l.cat === cid && (l.tipo === "despesa" || l.tipo === "receita") && l.data.startsWith(ym));
+    const total = itens.reduce((t, l) => t + l.valor, 0);
+    const [a, m] = ym.split("-").map(Number);
+    const nDias = new Date(a, m, 0).getDate();
+    const porDia = Array(nDias).fill(0);
+    itens.forEach((l) => (porDia[Number(l.data.slice(8)) - 1] += l.valor));
+    const maxDia = Math.max(1, ...porDia);
+    const corBarra = c.cor || "var(--laranja-graf)";
+    const barras = porDia.map((v, i) => {
+      const h = v ? Math.max(3, (v / maxDia) * 100) : 0;
+      const x = i * (300 / nDias);
+      return `<rect x="${x + 1}" y="${110 - h}" width="${300 / nDias - 2}" height="${h}" rx="2" style="fill:${corBarra}"><title>${i + 1}: ${fmt(v)}</title></rect>`;
+    }).join("");
+    const marcas = [1, 8, 15, 22, 29].filter((d) => d <= nDias).map((d) => `<text x="${(d - 0.5) * (300 / nDias)}" y="126" text-anchor="middle" font-size="10" fill="#888">${d}</text>`).join("");
+    const lista = [...itens].sort((x, y) => (ordem === "valor" ? y.valor - x.valor : y.data.localeCompare(x.data)) || y.id.localeCompare(x.id));
+    const maxV = lista.reduce((mx, l) => Math.max(mx, l.valor), 1);
+    const dataLonga = (iso) => { const [aa, mm, dd] = iso.split("-").map(Number); return `${dd} de ${MES3[mm - 1]} de ${aa}`; };
+    $("[data-detcat]", el).innerHTML = `
+      <div class="det-resumo">
+        <div><small>Total</small><b class="num">${fmtR(total)}</b></div>
+        <div><small>Média por dia</small><b class="num">${fmtR(Math.round(total / nDias))}</b></div>
+        <div><small>Lançamentos</small><b class="num">${itens.length}</b></div>
+      </div>
+      ${total ? `<svg class="det-graf" viewBox="0 0 300 130" preserveAspectRatio="none"><line x1="0" y1="110.5" x2="300" y2="110.5" stroke="#ddd"/>${barras}${marcas}</svg>` : ""}
+      <div class="det-ord"><b>${c.tipo === "receita" ? "Receitas" : "Despesas"}</b>
+        <div class="alternar det-alt"><button data-ord="valor" class="${ordem === "valor" ? "ativo" : ""}">Por valor</button><button data-ord="data" class="${ordem === "data" ? "ativo" : ""}">Por data</button></div></div>
+      <div class="det-lista">${lista.length ? lista.map((l) => {
+        const p = total ? (l.valor / total) * 100 : 0;
+        const extra = [l.cartao ? esc(cartao(l.cartao).nome) : "", l.parc ? `${l.parc.n}/${l.parc.t}` : ""].filter(Boolean).join(" · ");
+        return `<button class="det-item" data-lanc="${l.id}">${bola(c.icone, c.cor)}<span class="meio">
+          <span class="det-l1"><span>${esc(l.nota || c.nome)}</span><b class="num">${fmt(l.valor)}</b></span>
+          <span class="det-bar"><i style="width:${(l.valor / maxV) * 100}%;background:${corBarra}"></i><small>${nf2.format(p)}%</small></span>
+          <small class="det-data">${dataLonga(l.data)}${extra ? " · " + extra : ""}</small></span></button>`;
+      }).join("") : `<p class="vazio">${ic("receipt")}Nenhum lançamento de ${esc(c.nome)} em ${nomeMes(ym)}.</p>`}</div>`;
+    el.querySelectorAll("[data-ord]").forEach((b) => (b.onclick = () => { ordem = b.dataset.ord; pintar(); }));
+    el.querySelectorAll("[data-lanc]").forEach((b) => (b.onclick = () => abrirLanc(b.dataset.lanc)));
+  };
+  pintar();
+  verCategoria.repintar = pintar;
+}
 
 /* ----- Comparativo receitas x despesas ----- */
 function dadosPeriodo(filtro) {
@@ -777,7 +830,7 @@ function listaPct(lista, total, cls) {
   const max = lista[0].v;
   return `<div class="pct-col">${lista.map((x) => {
     const k = cat(x.id), p = total ? (x.v / total) * 100 : 0;
-    return `<div class="pct-l"><div class="pct-t"><span>${esc(k.nome)}</span><b class="num">${p < 1 && p > 0 ? "<1" : Math.round(p)}%</b></div>
+    return `<div class="pct-l" data-vercat="${x.id}"><div class="pct-t"><span>${esc(k.nome)}</span><b class="num">${p < 1 && p > 0 ? "<1" : Math.round(p)}%</b></div>
       <div class="pct-b"><i class="${cls}" style="width:${(x.v / max) * 100}%${k.cor ? `;background:${k.cor}` : ""}"></i></div></div>`;
   }).join("")}</div>`;
 }
@@ -881,6 +934,7 @@ ligar.relatorios = () => {
     if (S.cmp.modo === "mes") S.cmp.mes = somaMes(S.cmp.mes, n); else S.cmp.ano += n;
     desenhar();
   }));
+  document.querySelectorAll("[data-vercat]").forEach((b) => (b.onclick = () => verCategoria(b.dataset.vercat, S.cmp.modo === "mes" ? S.cmp.mes : mesAtual())));
   document.querySelectorAll("[data-cm]").forEach((b) => (b.onclick = () => { S.cmp.mes = b.dataset.cm; S.cmp.modo = "mes"; desenhar(); }));
   document.querySelectorAll("[data-ano]").forEach((b) => (b.onclick = () => { S.relAno += Number(b.dataset.ano); desenhar(); }));
   document.querySelectorAll("[data-pagar]").forEach((b) => (b.onclick = () => {
@@ -946,6 +1000,7 @@ function atualizarFundo() {
   setTimeout(() => {
     if (pilha.length && verFaturas.repintar && document.contains($("[data-c]"))) verFaturas.repintar();
     if (abrirBusca.repintar && $("[data-q]")) abrirBusca.repintar();
+    if (verCategoria.repintar && $("[data-detcat]")) verCategoria.repintar();
     desenhar();
   }, 0);
 }
@@ -1094,7 +1149,7 @@ function abrirEditor(l, opc = {}) {
     if (E.tipo === "transf") { box.innerHTML = ""; return; }
     const pagoCom = E.cartao ? `<button class="chip cartao" data-pg>${ic("credit-card")}<span>${esc(cartao(E.cartao).nome)}</span></button>`
       : `<button class="chip" data-pg>${ic("wallet")}<span>${esc(conta(E.conta).nome)}</span></button>`;
-    const parc = E.cartao && !editando && !opc.fixo && !E.repetir ? `<button class="chip" data-parc>${E.parcelas}x</button>` : "";
+    const parc = E.cartao && !(editando && l.parc) && !opc.fixo && !E.repetir ? `<button class="chip" data-parc>${E.parcelas}x</button>` : "";
     box.innerHTML = pagoCom + parc;
     pintarRepetir();
     $("[data-pg]", box).onclick = async () => {
@@ -1220,7 +1275,13 @@ function abrirEditor(l, opc = {}) {
     else Object.assign(base, { cat: E.cat, conta: E.cartao ? null : E.conta, cartao: E.cartao || null });
 
     let msg = "Lançamento adicionado.";
-    if (editando) {
+    if (editando && E.cartao && E.parcelas > 1 && !l.parc) {
+      // lançamento existente passou a ser parcelado no cartão: vira N parcelas
+      const n = E.parcelas, cada = Math.floor(r.valor / n), sobra = r.valor - cada * n, g = novoId();
+      S.d.lancs = S.d.lancs.filter((x) => x.id !== l.id);
+      for (let i = 0; i < n; i++) S.d.lancs.push({ ...base, id: novoId() + i, valor: cada + (i === 0 ? sobra : 0), data: somaMesData(E.data, i), parc: { n: i + 1, t: n, g } });
+      msg = `Alterado para o cartão em ${n}x de ${fmtR(cada)}.`;
+    } else if (editando) {
       const alvo = S.d.lancs.find((x) => x.id === l.id);
       Object.assign(alvo, base);
       if (!alvo.cartao) delete alvo.parc;

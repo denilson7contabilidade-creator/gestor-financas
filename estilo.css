@@ -403,3 +403,34 @@ html[data-contraste="claro"] .cab .alternar button:not(.ativo), html[data-contra
 .rep-qtd-c input { width: 80px; text-align: center; font-size: 20px; font-weight: 700; padding: 9px 4px; }
 .rep-qtd-c span { color: var(--cinza); }
 .rep-qtd small { color: var(--cinza); font-size: 13px; }
+
+/* ----- v2.1: detalhe da categoria ----- */
+button.cat-linha { width: 100%; text-align: left; }
+button.cat-linha:active { background: var(--fundo-suave); }
+.cat-linha .seta { color: #aaa; }
+.cat-linha .seta svg.ic { width: 18px; height: 18px; }
+.pct-l { cursor: pointer; }
+.det-cab { display: flex; align-items: center; gap: 8px; padding-bottom: 12px; }
+.det-cab > button[data-x] { width: 40px; height: 40px; display: grid; place-items: center; flex: none; }
+.det-cab b { flex: 1; font-size: 19px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.det-mes { font-size: 15px; font-weight: 600; padding: 7px 10px; border-radius: 10px; background: rgba(0,0,0,.10); flex: none; }
+html[data-contraste="claro"] .det-mes { background: rgba(255,255,255,.18); color: #fff; }
+html[data-contraste="claro"] .det-cab > button[data-x] { color: #fff; }
+.det-corpo { flex: 1; overflow-y: auto; padding-bottom: calc(20px + var(--seguro-baixo)); }
+.det-resumo { display: grid; grid-template-columns: 1.3fr 1.2fr .8fr; gap: 8px; padding: 14px 16px 6px; }
+.det-resumo small { display: block; font-size: 12px; color: var(--cinza); }
+.det-resumo b { font-size: 16px; white-space: nowrap; }
+.det-graf { display: block; width: calc(100% - 32px); height: 130px; margin: 6px 16px 0; }
+.det-ord { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 14px 16px 10px; border-bottom: 1px solid var(--linha); }
+.det-ord > b { font-size: 17px; }
+.det-alt { margin: 0 !important; max-width: none !important; }
+.det-alt button { padding: 6px 12px; font-size: 13.5px; }
+.det-alt button:not(.ativo) { background: transparent; }
+.det-item { display: flex; align-items: center; gap: 14px; padding: 12px 16px; width: 100%; text-align: left; border-bottom: 1px solid var(--linha); }
+.det-item:active { background: var(--fundo-suave); }
+.det-item .meio { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.det-l1 { display: flex; justify-content: space-between; gap: 8px; font-size: 16px; }
+.det-l1 span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.det-bar { display: flex; align-items: center; gap: 8px; }
+.det-bar i { display: block; height: 7px; border-radius: 9px; min-width: 4px; }
+.det-bar small, .det-data { font-size: 12.5px; color: var(--cinza); }
