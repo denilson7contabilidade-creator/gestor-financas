@@ -1,5 +1,7 @@
 // Guarda os arquivos do app no celular para funcionar sem internet.
-const VERSAO = "gf-v5";
+// Com internet, sempre busca a versão mais nova; sem internet (ou com rede lenta),
+// usa a cópia guardada.
+const VERSAO = "gf-v6";
 const ARQUIVOS = [
   "./",
   "index.html",
@@ -14,7 +16,12 @@ const ARQUIVOS = [
 ];
 
 self.addEventListener("install", (e) => {
-  e.waitUntil(caches.open(VERSAO).then((c) => c.addAll(ARQUIVOS)).then(() => self.skipWaiting()));
+  // cache: "reload" ignora cópias antigas guardadas pelo navegador
+  e.waitUntil(
+    caches.open(VERSAO)
+      .then((c) => c.addAll(ARQUIVOS.map((u) => new Request(u, { cache: "reload" }))))
+      .then(() => self.skipWaiting())
+  );
 });
 
 self.addEventListener("activate", (e) => {
@@ -25,24 +32,20 @@ self.addEventListener("activate", (e) => {
   );
 });
 
-// Abre na hora com a cópia guardada; se houver internet, busca a versão nova
-// em segundo plano, que passa a valer na próxima vez que o app for aberto.
 self.addEventListener("fetch", (e) => {
   const req = e.request;
   if (req.method !== "GET" || new URL(req.url).origin !== location.origin) return;
   e.respondWith(
     caches.open(VERSAO).then(async (cache) => {
-      const guardado = await cache.match(req, { ignoreSearch: true });
-      const daRede = fetch(req)
-        .then((resp) => {
-          if (resp.ok) cache.put(req, resp.clone());
-          return resp;
-        })
+      const daRede = fetch(req, { cache: "no-cache" })
+        .then((resp) => { if (resp.ok) cache.put(req, resp.clone()); return resp; })
         .catch(() => null);
-      if (guardado) {
-        e.waitUntil(daRede);
-        return guardado;
-      }
+      // espera a internet por até 3 segundos; depois disso usa a cópia guardada
+      const limite = new Promise((ok) => setTimeout(() => ok(null), 3000));
+      const resp = await Promise.race([daRede, limite]);
+      if (resp) return resp;
+      const guardado = await cache.match(req, { ignoreSearch: true });
+      if (guardado) { e.waitUntil(daRede); return guardado; }
       return (await daRede) || (await cache.match("index.html")) || Response.error();
     })
   );

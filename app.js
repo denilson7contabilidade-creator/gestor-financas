@@ -1,7 +1,7 @@
 "use strict";
 /* Gestor de Finanças — app instalável, dados guardados só no aparelho e criptografados. */
 
-const VERSAO_APP = "1.4";
+const VERSAO_APP = "1.5";
 const $ = (s, el = document) => el.querySelector(s);
 const esc = (t) => String(t ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const ic = (n) => `<svg class="ic" viewBox="0 0 24 24">${ICONES[n] || ICONES["circle-ellipsis"]}</svg>`;
@@ -856,12 +856,14 @@ function telaPerfil() {
       ${op("sair", "log-out", "Sair", "")}
     </div></section>
     <p style="text-align:center;color:#999;font-size:12px;margin:22px 0 0">Gestor de Finanças ${VERSAO_APP} · dados guardados só neste aparelho<br>Ícones: Lucide (licença ISC)</p>
+    <p style="text-align:center;margin:10px 0 0"><button class="link" style="font-size:13.5px" data-atualizar>Procurar atualização</button></p>
     </div>`;
 }
 ligar.perfil = () => {
   const acoes = { fixos: gerirFixos, categorias: gerirCategorias, contas: gerirContas, cartoes: gerirCartoes, backup: salvarBackup, restaurar: restaurarNoPerfil, csv: exportarCSV, senha: trocarSenha, codigo: gerarCodigo, sair: sairConfirmar };
   document.querySelectorAll("[data-op]").forEach((b) => (b.onclick = () => acoes[b.dataset.op]()));
   const bi = $("[data-instalar]"); if (bi) bi.onclick = instalarApp;
+  $("[data-atualizar]").onclick = procurarAtualizacao;
 };
 
 async function sairConfirmar() { if (await confirmar("Sair", "Você vai precisar da senha para entrar de novo.", "Sair")) sair(); }
@@ -1476,9 +1478,32 @@ document.addEventListener("visibilitychange", () => {
   else marcarAtividade();
 });
 
+// Atualizações: procura versão nova ao abrir o app e ao voltar para ele;
+// quando chega uma versão nova, recarrega sozinho (a conta continua aberta).
+let registroSW = null;
 if ("serviceWorker" in navigator && location.protocol === "https:") {
-  navigator.serviceWorker.register("sw.js").catch(() => {});
+  const tinhaControle = !!navigator.serviceWorker.controller;
+  let recarregou = false;
+  navigator.serviceWorker.addEventListener("controllerchange", () => {
+    if (!tinhaControle || recarregou) return;
+    recarregou = true; marcarAtividade(); location.reload();
+  });
+  navigator.serviceWorker.register("sw.js", { updateViaCache: "none" })
+    .then((r) => { registroSW = r; r.update().catch(() => {}); })
+    .catch(() => {});
+  document.addEventListener("visibilitychange", () => { if (!document.hidden && registroSW) registroSW.update().catch(() => {}); });
 }
+async function procurarAtualizacao() {
+  aviso("Procurando atualização…");
+  try { if (registroSW) await registroSW.update(); } catch {}
+  marcarAtividade();
+  setTimeout(() => location.reload(), 900);
+}
+try {
+  const antes = localStorage.getItem("gf_versao");
+  if (antes && antes !== VERSAO_APP) setTimeout(() => aviso(`App atualizado para a versão ${VERSAO_APP}.`), 800);
+  localStorage.setItem("gf_versao", VERSAO_APP);
+} catch {}
 window.addEventListener("pagehide", () => { if (!document.hidden) marcarAtividade(); });
 
 retomarSessao().then((ok) => (ok ? desenhar() : telaLogin()));
