@@ -1,7 +1,7 @@
 "use strict";
 /* Gestor de Finanças — app instalável, dados guardados só no aparelho e criptografados. */
 
-const VERSAO_APP = "1.6";
+const VERSAO_APP = "1.7";
 const $ = (s, el = document) => el.querySelector(s);
 const esc = (t) => String(t ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const ic = (n) => `<svg class="ic" viewBox="0 0 24 24">${ICONES[n] || ICONES["circle-ellipsis"]}</svg>`;
@@ -91,24 +91,77 @@ async function salvar() {
   localStorage.setItem("gf_dados_" + S.u.id, JSON.stringify(pac));
 }
 
+// Modelo padrão de categorias (sem nomes pessoais)
+const DESPESAS_PADRAO = [
+  ["Alimentação", "utensils"], ["Mercado", "shopping-cart"], ["Moradia", "house"], ["Contas da casa", "zap"],
+  ["Internet e celular", "wifi"], ["Transporte", "bus"], ["Combustível", "fuel"], ["Saúde", "heart-pulse"],
+  ["Farmácia", "pill"], ["Educação", "book-open"], ["Lazer", "tree-palm"], ["Roupas", "shirt"],
+  ["Beleza", "scissors"], ["Academia", "dumbbell"], ["Filhos", "baby"], ["Pets", "paw-print"],
+  ["Assinaturas", "tv"], ["Presentes", "gift"], ["Viagem", "plane"], ["Cartões", "credit-card"],
+  ["Juros e taxas", "percent"], ["Outros", "circle-ellipsis"],
+];
+const RECEITAS_PADRAO = [
+  ["Salário", "banknote"], ["Extra", "hand-coins"], ["Investimentos", "trending-up"],
+  ["Reembolso", "receipt"], ["Presente", "gift"], ["Outros", "circle-ellipsis"],
+];
+
+// Troca, uma única vez, as categorias da primeira versão (com nomes pessoais) pelo modelo padrão.
+// Nenhum lançamento é perdido: os que usavam uma categoria antiga passam para a equivalente,
+// e, quando não há equivalente, vão para "Outros" com o nome antigo na nota.
+function migrarCategorias(d) {
+  if (d.modeloCats >= 2) return false;
+  const PARA = {
+    despesa: {
+      "Comida": "Alimentação", "Compras": "Mercado", "Moradia": "Moradia", "Lar": "Moradia", "Internet": "Internet e celular",
+      "Transporte": "Transporte", "Moto": "Transporte", "Saúde": "Saúde", "Dentista": "Saúde", "Educação": "Educação",
+      "Lazer": "Lazer", "Esportes": "Lazer", "Roupas": "Roupas", "Beleza": "Beleza", "Academia": "Academia",
+      "Filhos": "Filhos", "Presentes": "Presentes", "Viagem": "Viagem", "Cartões": "Cartões", "Juros": "Juros e taxas",
+      "Wayne": "Outros", "Isabela": "Outros", "Gravidez": "Outros", "Pessoal": "Outros", "Outras situações": "Outros",
+      "Poupar Dinheiro": "Outros", "Aposta Depositada": "Outros", "Eletrônicos": "Outros",
+    },
+    receita: { "Denilson Show": "Outros" },
+  };
+  const MANTER_NOTA = new Set(["Comida", "Internet", "Juros"]); // equivalentes diretos: não precisa anotar
+  const padrao = { despesa: DESPESAS_PADRAO, receita: RECEITAS_PADRAO };
+  for (const tipo of ["despesa", "receita"]) {
+    // garante as categorias padrão (reaproveita as que já existem com o mesmo nome)
+    for (const [nome, icone] of padrao[tipo]) {
+      if (!d.categorias.some((c) => c.tipo === tipo && c.nome === nome)) d.categorias.push({ id: novoId(), tipo, nome, icone });
+    }
+    const porNome = (n) => d.categorias.find((c) => c.tipo === tipo && c.nome === n);
+    for (const [antigo, novo] of Object.entries(PARA[tipo])) {
+      if (antigo === novo) continue;
+      const velha = porNome(antigo), nova = porNome(novo);
+      if (!velha || !nova) continue;
+      for (const l of d.lancs) if (l.cat === velha.id) {
+        l.cat = nova.id;
+        if (!l.nota && !MANTER_NOTA.has(antigo)) l.nota = antigo;
+      }
+      for (const f of d.fixos || []) if (f.cat === velha.id) { f.cat = nova.id; if (!f.nota && !MANTER_NOTA.has(antigo)) f.nota = antigo; }
+      if (velha.cor && !nova.cor) nova.cor = velha.cor;
+      d.categorias = d.categorias.filter((c) => c !== velha);
+    }
+  }
+  // ordena: padrão primeiro, na ordem do modelo; criadas pelo usuário depois
+  const ordem = (c) => { const lista = padrao[c.tipo] || []; const i = lista.findIndex(([n]) => n === c.nome); return i < 0 ? 999 : i; };
+  d.categorias.sort((a, b) => (a.tipo === b.tipo ? ordem(a) - ordem(b) : a.tipo === "despesa" ? -1 : 1));
+  d.modeloCats = 2;
+  return true;
+}
+
 function dadosIniciais() {
   const D = (nome, icone) => ({ id: novoId(), tipo: "despesa", nome, icone });
   const R = (nome, icone) => ({ id: novoId(), tipo: "receita", nome, icone });
   return {
     versao: 1,
+    modeloCats: 2,
     contas: [{ id: novoId(), nome: "Conta principal", saldoInicial: 0 }],
     cartoes: [],
     fixos: [],
     pulados: [],
     categorias: [
-      D("Alimentação", "utensils"), D("Mercado", "shopping-cart"), D("Moradia", "house"), D("Contas da casa", "zap"),
-      D("Internet e celular", "wifi"), D("Transporte", "bus"), D("Combustível", "fuel"), D("Saúde", "heart-pulse"),
-      D("Farmácia", "pill"), D("Educação", "book-open"), D("Lazer", "tree-palm"), D("Roupas", "shirt"),
-      D("Beleza", "scissors"), D("Academia", "dumbbell"), D("Filhos", "baby"), D("Pets", "paw-print"),
-      D("Assinaturas", "tv"), D("Presentes", "gift"), D("Viagem", "plane"), D("Cartões", "credit-card"),
-      D("Juros e taxas", "percent"), D("Outros", "circle-ellipsis"),
-      { ...R("Denilson Show", "rocket"), cor: "#E0560B" }, R("Salário", "banknote"), R("Extra", "hand-coins"),
-      R("Investimentos", "trending-up"), R("Reembolso", "receipt"), R("Presente", "gift"), R("Outros", "circle-ellipsis"),
+      ...DESPESAS_PADRAO.map(([n, i]) => D(n, i)),
+      ...RECEITAS_PADRAO.map(([n, i]) => R(n, i)),
     ],
     lancs: [],
   };
@@ -135,6 +188,7 @@ async function abrirSessao(u, chaveBytes, dados) {
   S.d = dados;
   S.d.fixos ||= [];
   S.d.pulados ||= [];
+  const migrou = migrarCategorias(S.d);
   S.mes = mesAtual();
   S.graf = { tipo: "despesa", mes: mesAtual() };
   S.relAno = Number(mesAtual().slice(0, 4));
@@ -142,6 +196,7 @@ async function abrirSessao(u, chaveBytes, dados) {
   S.aba = "inicio";
   lembrarSessao();
   try { navigator.storage && navigator.storage.persist && navigator.storage.persist(); } catch {}
+  if (migrou) await salvar();
 }
 
 async function entrar(login, senha) {
@@ -854,7 +909,7 @@ function telaPerfil() {
       ${op("codigo", "lock", "Gerar novo código de recuperação", "O código antigo deixa de valer")}
       ${op("sair", "log-out", "Sair", "")}
     </div></section>
-    <p style="text-align:center;color:#999;font-size:12px;margin:22px 0 0">Gestor de Finanças ${VERSAO_APP} · dados guardados só neste aparelho<br>Ícones: Lucide (licença ISC)</p>
+    <p style="text-align:center;color:#999;font-size:12px;margin:22px 0 0">Gestor de Finanças ${VERSAO_APP} · criado por <b style="color:#666">Denilson Carvalho</b><br>Dados guardados só neste aparelho · Ícones: Lucide (licença ISC)</p>
     <p style="text-align:center;margin:10px 0 0"><button class="link" style="font-size:13.5px" data-atualizar>Procurar atualização</button></p>
     </div>`;
 }
