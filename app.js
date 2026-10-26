@@ -1,7 +1,7 @@
 "use strict";
 /* Gestor de Finanças — app instalável, dados guardados só no aparelho e criptografados. */
 
-const VERSAO_APP = "1.1";
+const VERSAO_APP = "1.2";
 const $ = (s, el = document) => el.querySelector(s);
 const esc = (t) => String(t ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const ic = (n) => `<svg class="ic" viewBox="0 0 24 24">${ICONES[n] || ICONES["circle-ellipsis"]}</svg>`;
@@ -137,6 +137,7 @@ async function abrirSessao(u, chaveBytes, dados) {
   S.relAno = Number(mesAtual().slice(0, 4));
   S.cmp = { modo: "mes", mes: mesAtual(), ano: Number(mesAtual().slice(0, 4)) };
   S.aba = "inicio";
+  lembrarSessao();
   try { navigator.storage && navigator.storage.persist && navigator.storage.persist(); } catch {}
 }
 
@@ -155,7 +156,29 @@ async function trocarSenhaCom(u, chaveBytes, nova) {
   gravarUsuario(u);
 }
 
+// Mantém a conta aberta ao recarregar a tela (puxar para atualizar).
+// Fica só na memória desta janela do app: some ao fechar o app.
+function lembrarSessao() {
+  try { sessionStorage.setItem("gf_sessao", JSON.stringify({ id: S.u.id, k: b64(S.chaveBytes), aba: S.aba, ts: Date.now() })); } catch {}
+}
+function marcarAtividade() {
+  if (!S.u) return;
+  try { const x = JSON.parse(sessionStorage.getItem("gf_sessao")); if (x) { x.ts = Date.now(); x.aba = S.aba; sessionStorage.setItem("gf_sessao", JSON.stringify(x)); } } catch {}
+}
+async function retomarSessao() {
+  try {
+    const x = JSON.parse(sessionStorage.getItem("gf_sessao"));
+    if (!x || Date.now() - x.ts > 5 * 60 * 1000) { sessionStorage.removeItem("gf_sessao"); return false; }
+    const u = lerUsuarios().find((y) => y.id === x.id);
+    if (!u) return false;
+    await abrirSessao(u, deB64(x.k));
+    if (x.aba) S.aba = x.aba;
+    return true;
+  } catch { try { sessionStorage.removeItem("gf_sessao"); } catch {} return false; }
+}
+
 function sair() {
+  try { sessionStorage.removeItem("gf_sessao"); } catch {}
   S.u = S.chave = S.chaveBytes = S.d = null;
   fecharTudo();
   telaLogin();
@@ -423,7 +446,7 @@ function desenhar() {
   if (!S.u) return telaLogin();
   const telas = { inicio: telaInicio, graficos: telaGraficos, relatorios: telaRelatorios, perfil: telaPerfil };
   $("#app").innerHTML = telas[S.aba]() + nav();
-  $("#app").querySelectorAll("[data-aba]").forEach((b) => (b.onclick = () => { S.aba = b.dataset.aba; desenhar(); scrollTo(0, 0); }));
+  $("#app").querySelectorAll("[data-aba]").forEach((b) => (b.onclick = () => { S.aba = b.dataset.aba; marcarAtividade(); desenhar(); scrollTo(0, 0); }));
   $("[data-novo]").onclick = () => abrirEditor();
   ligar[S.aba] && ligar[S.aba]();
 }
@@ -506,7 +529,7 @@ function abrirLanc(id) {
 }
 
 /* ----- Gráficos ----- */
-const CORES = ["#111111", "#F57C2B", "#8A8A8A", "#FFB98A", "#D0D0D0"];
+const CORES = ["#111111", "#E0560B", "#8A8A8A", "#F5A372", "#D0D0D0"];
 function telaGraficos() {
   const g = S.graf;
   const atual = mesAtual();
@@ -750,7 +773,7 @@ function telaPerfil() {
   const txtBk = diasBk === null ? "Nunca feito — recomendado!" : diasBk === 0 ? "Último: hoje" : `Último: há ${diasBk} dia${diasBk > 1 ? "s" : ""}`;
   const op = (dado, icone, tit, sub) => `<button class="linha-opc" data-op="${dado}"><span class="bola">${ic(icone)}</span><span class="meio">${tit}${sub ? `<small>${sub}</small>` : ""}</span><span class="seta">${ic("chevron-right")}</span></button>`;
   return `<header class="cab"><div class="perfil-topo"><div class="avatar">${esc(u.nome.slice(0, 1).toUpperCase())}</div>
-      <div><b style="font-size:18px">${esc(u.nome)}</b><br><small style="color:#5a4a3e">usuário: ${esc(u.login)}</small></div></div></header>
+      <div><b style="font-size:18px">${esc(u.nome)}</b><br><small style="color:rgba(0,0,0,.68)">usuário: ${esc(u.login)}</small></div></div></header>
     <div class="conteudo">${!instalado() && pedidoInstalar ? `<div class="instalar"><img src="icons/icon-192.png" alt=""><span>Instale o app na tela inicial.</span><button data-instalar>Instalar</button></div>` : ""}
     <section class="secao"><h2>Cadastros</h2><div class="cartao-box">
       ${op("categorias", "tag", "Categorias", `${S.d.categorias.length} categorias`)}
@@ -1188,12 +1211,13 @@ async function exportarCSV() {
 // Bloqueia de novo se o app ficar mais de 5 minutos em segundo plano
 let escondidoEm = 0;
 document.addEventListener("visibilitychange", () => {
-  if (document.hidden) escondidoEm = Date.now();
+  if (document.hidden) { escondidoEm = Date.now(); marcarAtividade(); }
   else if (S.u && escondidoEm && Date.now() - escondidoEm > 5 * 60 * 1000) { sair(); aviso("Por segurança, entre novamente."); }
 });
 
 if ("serviceWorker" in navigator && location.protocol === "https:") {
   navigator.serviceWorker.register("sw.js").catch(() => {});
 }
+window.addEventListener("pagehide", () => { if (!document.hidden) marcarAtividade(); });
 
-telaLogin();
+retomarSessao().then((ok) => (ok ? desenhar() : telaLogin()));

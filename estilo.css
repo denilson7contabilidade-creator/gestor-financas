@@ -1,21 +1,21 @@
 :root {
-  --fundo: #F5C6A0;        /* laranja claro, um pouco mais fechado */
-  --fundo-forte: #EDB287;
-  --fundo-suave: #FCEBDD;  /* círculos dos ícones e destaques */
+  --fundo: #E0560B;        /* laranja choque, com brilho baixo */
+  --fundo-forte: rgba(0,0,0,.14);
+  --fundo-suave: #FBE2D2;  /* círculos dos ícones e destaques */
   --branco: #FFFFFF;
   --preto: #111111;
   --cinza: #6E6E6E;
   --cinza-claro: #EDEDED;
   --linha: #F0E6DE;
-  --laranja: #F57C2B;
-  --laranja-graf: #E07A3A;
+  --laranja: #E0560B;
+  --laranja-graf: #E0560B;
   --seguro-baixo: env(safe-area-inset-bottom, 0px);
   --seguro-topo: env(safe-area-inset-top, 0px);
   color-scheme: light;
 }
 
 * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
-html, body { margin: 0; height: 100%; }
+html, body { margin: 0; height: 100%; overscroll-behavior-y: none; }
 body {
   font-family: Roboto, "Segoe UI", system-ui, -apple-system, sans-serif;
   background: var(--fundo);
@@ -48,17 +48,17 @@ svg.ic { width: 24px; height: 24px; fill: none; stroke: currentColor; stroke-wid
 
 /* ========== LOGIN ========== */
 .login { min-height: 100vh; background: var(--fundo); display: flex; flex-direction: column; justify-content: center; padding: 32px 24px calc(32px + var(--seguro-baixo)); }
-.login .logo { width: 84px; height: 84px; border-radius: 22px; display: block; margin: 0 auto 16px; box-shadow: 0 6px 20px rgba(0,0,0,.12); }
+.login .logo { width: 84px; height: 84px; border-radius: 22px; display: block; margin: 0 auto 16px; box-shadow: 0 0 0 3px rgba(255,255,255,.55), 0 8px 22px rgba(0,0,0,.25); }
 .login h1 { text-align: center; margin: 0 0 4px; font-size: 26px; }
-.login .sub { text-align: center; color: #4E3626; margin: 0 0 28px; }
+.login .sub { text-align: center; color: rgba(0,0,0,.68); margin: 0 0 28px; }
 .login form { background: var(--branco); border-radius: 22px; padding: 22px 18px; display: flex; flex-direction: column; gap: 12px; }
 .login label { font-size: 14px; color: var(--cinza); display: flex; flex-direction: column; gap: 6px; }
 .login .erro { color: #B3261E; font-size: 14px; min-height: 18px; margin: 0; }
 .login .opcoes { display: flex; flex-direction: column; align-items: center; gap: 14px; margin-top: 22px; font-size: 15px; }
-.login .rodape { text-align: center; color: #6B4E3A; font-size: 13px; margin-top: 22px; }
+.login .rodape { text-align: center; color: rgba(0,0,0,.62); font-size: 13px; margin-top: 22px; }
 .codigo-rec {
   font-family: ui-monospace, "Roboto Mono", monospace; font-size: 26px; font-weight: 700; letter-spacing: 2px;
-  text-align: center; background: var(--fundo); border: 2px dashed var(--preto); border-radius: 14px; padding: 18px 8px; margin: 6px 0;
+  text-align: center; background: var(--fundo-suave); border: 2px dashed var(--preto); border-radius: 14px; padding: 18px 8px; margin: 6px 0;
 }
 .marcar { flex-direction: row !important; align-items: center; gap: 10px !important; color: var(--preto) !important; font-size: 15px !important; }
 .marcar input { width: 22px; height: 22px; accent-color: var(--preto); }
@@ -69,9 +69,9 @@ svg.ic { width: 24px; height: 24px; fill: none; stroke: currentColor; stroke-wid
 .topo-linha h1 { font-size: 20px; margin: 0; }
 .resumo { display: grid; grid-template-columns: 76px 1fr 1fr 1fr; gap: 6px; align-items: center; margin-top: 10px; }
 .sel-mes { background: var(--fundo-forte); border-radius: 12px; padding: 6px 4px; text-align: center; line-height: 1.15; }
-.sel-mes small { display: block; font-size: 12px; color: #4E3626; }
+.sel-mes small { display: block; font-size: 12px; color: rgba(0,0,0,.68); }
 .sel-mes b { font-size: 16px; font-weight: 600; text-transform: lowercase; }
-.resumo .col span { display: block; font-size: 13px; color: #4E3626; }
+.resumo .col span { display: block; font-size: 13px; color: rgba(0,0,0,.68); }
 .resumo .col b { font-size: 17px; font-weight: 600; white-space: nowrap; }
 .no-cartao { margin-top: 12px; background: var(--branco); border-radius: 12px; padding: 9px 12px; font-size: 13px; display: flex; align-items: center; gap: 8px; }
 .no-cartao svg.ic { width: 18px; height: 18px; }

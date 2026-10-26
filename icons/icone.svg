@@ -1,5 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
-  <rect width="512" height="512" fill="#F57C2B"/>
+  <rect width="512" height="512" fill="#E0560B"/>
   <g transform="translate(-14 14) rotate(45 256 256)">
     <!-- chamas -->
     <path d="M226 352 C226 392 244 418 256 440 C268 418 286 392 286 352 Z" fill="#FFD9B8"/>
@@ -11,6 +11,6 @@
     <path d="M256 92 C300 130 314 200 304 300 L296 348 L216 348 L208 300 C198 200 212 130 256 92 Z" fill="#111"/>
     <!-- janela -->
     <circle cx="256" cy="210" r="30" fill="#FFF"/>
-    <circle cx="256" cy="210" r="17" fill="#F57C2B"/>
+    <circle cx="256" cy="210" r="17" fill="#E0560B"/>
   </g>
 </svg>
