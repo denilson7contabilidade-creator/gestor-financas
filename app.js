@@ -1,7 +1,7 @@
 "use strict";
 /* Gestor de Finanças — app instalável, dados guardados só no aparelho e criptografados. */
 
-const VERSAO_APP = "1.3";
+const VERSAO_APP = "1.4";
 const $ = (s, el = document) => el.querySelector(s);
 const esc = (t) => String(t ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const ic = (n) => `<svg class="ic" viewBox="0 0 24 24">${ICONES[n] || ICONES["circle-ellipsis"]}</svg>`;
@@ -191,6 +191,10 @@ function sair() {
 }
 
 /* ================= CÁLCULOS ================= */
+
+// Bolinha do ícone, com a cor da categoria quando ela tiver uma
+const bola = (icone, cor) => `<span class="bola${cor ? " cor" : ""}"${cor ? ` style="--cc:${cor}"` : ""}>${ic(icone)}</span>`;
+const CORES_CAT = ["#E0560B", "#C62828", "#D81B60", "#8E24AA", "#3949AB", "#1E88E5", "#00897B", "#43A047", "#B8860B", "#6D4C41", "#546E7A", "#111111"];
 
 const cat = (id) => S.d.categorias.find((c) => c.id === id) || { nome: "Sem categoria", icone: "tag" };
 const conta = (id) => S.d.contas.find((c) => c.id === id) || { nome: "Conta removida" };
@@ -483,7 +487,7 @@ function telaInicio() {
     corpo += `<div class="dia-cab fixos-cab"><span>${ic("repeat")} Fixos a confirmar</span><span class="num">${[pd ? `- ${fmt(pd)}` : "", pr ? `+ ${fmt(pr)}` : ""].filter(Boolean).join(" · ")}</span></div>`;
     corpo += pend.map((f) => {
       const c = cat(f.cat);
-      return `<div class="item pendente"><button class="pend-abrir" data-fixo="${f.id}"><span class="bola">${ic(c.icone)}</span>
+      return `<div class="item pendente"><button class="pend-abrir" data-fixo="${f.id}">${bola(c.icone, c.cor)}
         <span class="meio"><div>${esc(f.nota || c.nome)}</div><small>dia ${dataCurta(dataFixo(f, S.mes))}${f.nota ? " · " + esc(c.nome) : ""}${f.cartao ? " · " + esc(cartao(f.cartao).nome) : ""}</small></span>
         <span class="val num">${f.tipo === "despesa" ? "- " : "+ "}${fmt(f.valor)}</span></button>
         <button class="pend-ok" data-confirmar="${f.id}" aria-label="Confirmar">${ic("check")}</button></div>`;
@@ -530,7 +534,7 @@ function lembreteBackup() {
 }
 
 function itemLanc(l, comData) {
-  let icone, titulo, sub = "", sinal;
+  let icone, titulo, sub = "", sinal, cor = null;
   const partes = comData === true ? [dataCurta(l.data)] : [];
   if (l.tipo === "transf") {
     icone = "arrow-left-right"; titulo = l.nota || "Transferência"; sinal = "";
@@ -540,14 +544,14 @@ function itemLanc(l, comData) {
     partes.push(`Fatura de ${nomeMes(l.fatura)} · ${esc(conta(l.conta).nome)}`);
   } else {
     const c = cat(l.cat);
-    icone = c.icone; titulo = l.nota || c.nome; sinal = l.tipo === "despesa" ? "- " : "+ ";
+    icone = c.icone; cor = c.cor; titulo = l.nota || c.nome; sinal = l.tipo === "despesa" ? "- " : "+ ";
     if (l.nota) partes.push(esc(c.nome));
     if (l.cartao) partes.push(`${ic("credit-card")}${esc(cartao(l.cartao).nome)}`);
     if (l.parc) partes.push(`${l.parc.n}/${l.parc.t}`);
     if (l.fixo) partes.push(`${ic("repeat")}Fixo`);
   }
   sub = partes.join(" · ");
-  return `<button class="item" data-lanc="${l.id}"><span class="bola">${ic(icone)}</span>
+  return `<button class="item" data-lanc="${l.id}">${bola(icone, cor)}
     <span class="meio"><div>${esc(titulo)}</div>${sub ? `<small>${sub}</small>` : ""}</span>
     <span class="val num">${sinal}${fmt(l.valor)}</span></button>`;
 }
@@ -591,7 +595,7 @@ function telaGraficos() {
     porCat[l.cat] = (porCat[l.cat] || 0) + l.valor; total += l.valor;
   }
   const ordem = Object.entries(porCat).sort((a, b) => b[1] - a[1]);
-  let fatias = ordem.slice(0, 4).map(([id, v]) => ({ nome: cat(id).nome, v }));
+  let fatias = ordem.slice(0, 4).map(([id, v]) => ({ nome: cat(id).nome, v, cor: cat(id).cor }));
   const resto = ordem.slice(4).reduce((s, [, v]) => s + v, 0);
   if (resto) fatias.push({ nome: "Outro", v: resto });
 
@@ -603,16 +607,16 @@ function telaGraficos() {
     let acum = 0;
     rosca = fatias.map((f, i) => {
       const frac = f.v / total;
-      const seg = `<circle r="${R}" cx="100" cy="100" fill="none" stroke="${CORES[i]}" stroke-width="34"
+      const seg = `<circle r="${R}" cx="100" cy="100" fill="none" stroke="${f.cor || CORES[i]}" stroke-width="34"
         stroke-dasharray="${Math.max(0, frac * C - (fatias.length > 1 ? 2 : 0))} ${C}" stroke-dashoffset="${-acum * C}" transform="rotate(-90 100 100)"/>`;
       acum += frac; return seg;
     }).join("");
-    legenda = fatias.map((f, i) => `<div><i style="background:${CORES[i]}"></i><span>${esc(f.nome)}</span><b class="num">${pctTxt(f.v)}</b></div>`).join("");
+    legenda = fatias.map((f, i) => `<div><i style="background:${f.cor || CORES[i]}"></i><span>${esc(f.nome)}</span><b class="num">${pctTxt(f.v)}</b></div>`).join("");
   }
   const max = ordem.length ? ordem[0][1] : 1;
   const linhas = ordem.map(([id, v]) => {
     const c = cat(id);
-    return `<div class="cat-linha"><span class="bola">${ic(c.icone)}</span><div class="meio">
+    return `<div class="cat-linha">${bola(c.icone, c.cor)}<div class="meio">
       <div class="topo2"><span>${esc(c.nome)}</span><b class="num">${fmt(v)}</b></div>
       <div class="barra"><i style="width:${(v / max) * 72}%"></i><span>${pctTxt(v)}</span></div></div></div>`;
   }).join("");
@@ -642,8 +646,20 @@ function dadosPeriodo(filtro) {
     if (l.tipo === "receita") rec += l.valor; else des += l.valor;
     pc[l.tipo][l.cat] = (pc[l.tipo][l.cat] || 0) + l.valor;
   }
-  const maior = (o) => { const e = Object.entries(o).sort((a, b) => b[1] - a[1])[0]; return e ? { id: e[0], v: e[1] } : null; };
-  return { rec, des, topRec: maior(pc.receita), topDes: maior(pc.despesa) };
+  const ord = (o) => Object.entries(o).sort((a, b) => b[1] - a[1]).map(([id, v]) => ({ id, v }));
+  const lr = ord(pc.receita), ld = ord(pc.despesa);
+  return { rec, des, topRec: lr[0] || null, topDes: ld[0] || null, listaRec: lr, listaDes: ld };
+}
+
+// Lista pequena com a porcentagem de cada categoria
+function listaPct(lista, total, cls) {
+  if (!lista.length) return `<div class="pct-col"></div>`;
+  const max = lista[0].v;
+  return `<div class="pct-col">${lista.map((x) => {
+    const k = cat(x.id), p = total ? (x.v / total) * 100 : 0;
+    return `<div class="pct-l"><div class="pct-t"><span>${esc(k.nome)}</span><b class="num">${p < 1 && p > 0 ? "<1" : Math.round(p)}%</b></div>
+      <div class="pct-b"><i class="${cls}" style="width:${(x.v / max) * 100}%${k.cor ? `;background:${k.cor}` : ""}"></i></div></div>`;
+  }).join("")}</div>`;
 }
 
 function blocoComparativo() {
@@ -665,7 +681,7 @@ function blocoComparativo() {
   const pesa = (rot, top, total, extra) => {
     if (!top) return `<div class="pesa vazio-p"><small>${rot}</small><span>Nenhum lançamento</span></div>`;
     const k = cat(top.id);
-    return `<div class="pesa"><small>${rot}</small><div class="pesa-l"><span class="bola">${ic(k.icone)}</span><b>${esc(k.nome)}</b></div>
+    return `<div class="pesa"><small>${rot}</small><div class="pesa-l">${bola(k.icone, k.cor)}<b>${esc(k.nome)}</b></div>
       <div class="pesa-v"><span class="num">${fmt(top.v)}</span><strong class="num">${pct(top.v, total)}%</strong></div>
       ${extra ? `<p>${extra}</p>` : ""}</div>`;
   };
@@ -688,6 +704,7 @@ function blocoComparativo() {
       <div class="cmp-l"><span>Despesas</span><div class="cmp-trilho"><i class="d" style="width:${(d.des / max) * 100}%"></i></div><b class="num">${fmt(d.des)}</b></div>
     </div>${resultado}
     <div class="pesa-grade">${pesa("Despesa que mais pesa", d.topDes, d.des, extraDes)}${pesa("Receita que mais pesa", d.topRec, d.rec, extraRec)}</div>
+    <div class="pct-grade">${listaPct(d.listaDes, d.des, "d")}${listaPct(d.listaRec, d.rec, "r")}</div>
     <div class="mini-barras">${barras}</div>
     <div class="mb-leg"><span><i class="r"></i>Receitas</span><span><i class="d"></i>Despesas</span></div>
   </div></section>`;
@@ -825,7 +842,7 @@ function telaPerfil() {
     <section class="secao"><h2>Cadastros</h2><div class="cartao-box">
       ${op("categorias", "tag", "Categorias", `${S.d.categorias.length} categorias`)}
       ${op("contas", "wallet", "Contas", "Onde fica seu dinheiro (banco, carteira…)")}
-      ${op("fixos", "repeat", "Lançamentos fixos", S.d.fixos.length ? `${S.d.fixos.length} todo mês` : "Aluguel, salário, internet…")}
+      ${op("fixos", "repeat", "Lançamentos recorrentes (fixos)", S.d.fixos.length ? `${S.d.fixos.length} todo mês` : "Aluguel, salário, internet…")}
       ${op("cartoes", "credit-card", "Cartões de crédito", S.d.cartoes.length ? S.d.cartoes.map((c) => c.nome).join(", ") : "Nenhum cadastrado")}
     </div></section>
     <section class="secao"><h2>Seus dados</h2><div class="cartao-box">
@@ -862,8 +879,8 @@ function abrirEditor(l, opc = {}) {
   const fonte = l || opc.modelo || opc.fixo;
   const E = fonte
     ? { tipo: fonte.tipo, cat: fonte.cat, nota: fonte.nota || "", conta: fonte.conta || S.d.contas[0]?.id, cartao: fonte.cartao || null,
-        destino: fonte.destino || S.d.contas[1]?.id, data: editando ? l.data : hoje(), expr: nf0.format(fonte.valor / 100).replace(/\./g, ""), parcelas: 1, fixar: false }
-    : { tipo: "despesa", cat: null, expr: "", nota: "", data: hoje(), conta: S.d.contas[0]?.id, cartao: null, parcelas: 1, destino: S.d.contas[1]?.id, fixar: false };
+        destino: fonte.destino || S.d.contas[1]?.id, data: editando ? l.data : hoje(), expr: nf0.format(fonte.valor / 100).replace(/\./g, ""), parcelas: 1, repetir: 0 }
+    : { tipo: "despesa", cat: null, expr: "", nota: "", data: hoje(), conta: S.d.contas[0]?.id, cartao: null, parcelas: 1, destino: S.d.contas[1]?.id, repetir: 0 };
   if (!fonte && S.mes !== mesAtual()) E.data = `${S.mes}-01`;
   if (opc.fixo) E.data = dataFixo(opc.fixo, opc.ym);
   if (E.conta && !S.d.contas.some((c) => c.id === E.conta)) E.conta = S.d.contas[0]?.id;
@@ -880,7 +897,7 @@ function abrirEditor(l, opc = {}) {
     <div class="add-corpo" data-corpo></div>
     <div class="teclado-area">
       <div class="visor"><div class="chips" data-chips></div><div class="valor"><div class="num" data-vis>0</div><small data-res></small></div></div>
-      <div class="nota"><span>Nota:</span><input data-nota maxlength="80" placeholder="Insira uma nota…"></div>
+      <div class="nota"><span>Nota:</span><input data-nota maxlength="80" placeholder="Insira uma nota…"><button class="bt-repetir" data-repetirmes hidden></button></div>
       <div class="teclado">
         <button data-k="7">7</button><button data-k="8">8</button><button data-k="9">9</button><button class="data" data-data>${ic("calendar")}<span data-datatxt></span></button>
         <button data-k="4">4</button><button data-k="5">5</button><button data-k="6">6</button><button data-k="+">+</button>
@@ -904,7 +921,7 @@ function abrirEditor(l, opc = {}) {
       if (E.tipo === b.dataset.t) return;
       E.tipo = b.dataset.t; E.cat = fonte && fonte.tipo === E.tipo ? fonte.cat : ultimo(E.tipo);
       if (E.tipo !== "despesa") E.cartao = null;
-      if (E.tipo === "transf") E.fixar = false;
+      if (E.tipo === "transf") E.repetir = 0;
       todasCats = false;
       pintarTipos(); pintarCorpo(); pintarChips();
     }));
@@ -934,7 +951,7 @@ function abrirEditor(l, opc = {}) {
     }
     const mais = mostrar.length < cats.length ? `<button data-todas><span class="bola">${ic("circle-ellipsis")}</span>Todas (${cats.length})</button>` : "";
     corpo.innerHTML = cats.length
-      ? `<div class="grade-cat">${mostrar.map((c) => `<button data-c="${c.id}" class="${E.cat === c.id ? "sel" : ""}"><span class="bola">${ic(c.icone)}</span>${esc(c.nome)}</button>`).join("")}${mais}</div>`
+      ? `<div class="grade-cat">${mostrar.map((c) => `<button data-c="${c.id}" class="${E.cat === c.id ? "sel" : ""}">${bola(c.icone, c.cor)}${esc(c.nome)}</button>`).join("")}${mais}</div>`
       : `<div class="vazio">${ic("tag")}Nenhuma categoria de ${E.tipo}.<br>Crie em <b>Perfil → Categorias</b>.</div>`;
     corpo.querySelectorAll("[data-c]").forEach((b) => (b.onclick = () => {
       E.cat = b.dataset.c;
@@ -949,10 +966,9 @@ function abrirEditor(l, opc = {}) {
     if (E.tipo === "transf") { box.innerHTML = ""; return; }
     const pagoCom = E.cartao ? `<button class="chip cartao" data-pg>${ic("credit-card")}<span>${esc(cartao(E.cartao).nome)}</span></button>`
       : `<button class="chip" data-pg>${ic("wallet")}<span>${esc(conta(E.conta).nome)}</span></button>`;
-    const parc = E.cartao && !editando && !opc.fixo && !E.fixar ? `<button class="chip" data-parc>${E.parcelas}x</button>` : "";
-    const podeFixar = !editando && !opc.fixo && E.parcelas === 1;
-    const fixo = podeFixar ? `<button class="chip ${E.fixar ? "cartao" : ""}" data-fixar>${ic("repeat")}<span>Todo mês</span></button>` : "";
-    box.innerHTML = pagoCom + parc + fixo;
+    const parc = E.cartao && !editando && !opc.fixo && !E.repetir ? `<button class="chip" data-parc>${E.parcelas}x</button>` : "";
+    box.innerHTML = pagoCom + parc;
+    pintarRepetir();
     $("[data-pg]", box).onclick = async () => {
       const ops = S.d.contas.map((c) => ({ valor: "conta:" + c.id, rotulo: c.nome, icone: "wallet", grupo: "Sai do saldo", sub: "Dinheiro, Pix ou débito" }));
       if (E.tipo === "despesa") {
@@ -973,13 +989,29 @@ function abrirEditor(l, opc = {}) {
       const v = await escolher("Parcelas", ops, E.parcelas);
       if (v) { E.parcelas = v; pintarChips(); }
     };
-    const fx = $("[data-fixar]", box);
-    if (fx) fx.onclick = () => {
-      E.fixar = !E.fixar;
-      if (E.fixar) aviso(`Vai se repetir todo dia ${Number(E.data.slice(8))}. Você confirma a cada mês.`);
-      pintarChips();
-    };
   }
+
+  // Repetir todo mês (lançamento recorrente)
+  const btRep = $("[data-repetirmes]", el);
+  const txtRep = (n) => (n === -1 ? "Todo mês" : n > 0 ? `${n} meses` : "Repetir");
+  function pintarRepetir() {
+    const pode = !editando && !opc.fixo && E.tipo !== "transf" && E.parcelas === 1;
+    btRep.hidden = !pode;
+    btRep.classList.toggle("ativo", !!E.repetir);
+    btRep.innerHTML = `${ic("repeat")}<span>${txtRep(E.repetir)}</span>`;
+  }
+  btRep.onclick = async () => {
+    const dia = Number(E.data.slice(8));
+    const v = await escolher("Repetir", [
+      { valor: "0", rotulo: "Não repetir", icone: "x" },
+      { valor: "-1", rotulo: "Todo mês, sem data para acabar", icone: "repeat", sub: `Aluguel, salário, internet… todo dia ${dia}` },
+      ...[3, 6, 10, 12, 24].map((n) => ({ valor: String(n), rotulo: `Todo mês, por ${n} meses`, icone: "calendar-clock", sub: `Até ${nomeMes(somaMes(E.data.slice(0, 7), n - 1))}` })),
+    ], String(E.repetir));
+    if (v === null) return;
+    E.repetir = Number(v);
+    if (E.repetir) aviso("Nos próximos meses ele aparece em “Fixos a confirmar”, no Início.");
+    pintarChips();
+  };
 
   // Calculadora: aceita "12+4,50-3"
   function calc() {
@@ -1048,10 +1080,11 @@ function abrirEditor(l, opc = {}) {
     } else {
       const novo = { ...base, id: novoId() };
       if (opc.fixo) { novo.fixo = opc.fixo.id; msg = "Fixo confirmado."; }
-      else if (E.fixar) {
+      else if (E.repetir) {
         const f = { id: novoId(), tipo: base.tipo, cat: base.cat, valor: base.valor, nota: base.nota, conta: base.conta, cartao: base.cartao, dia: Number(E.data.slice(8)), inicio: E.data.slice(0, 7) };
+        if (E.repetir > 0) f.fim = somaMes(f.inicio, E.repetir);
         S.d.fixos.push(f); novo.fixo = f.id;
-        msg = `Fixo criado: vai aparecer todo dia ${f.dia} para confirmar.`;
+        msg = `Recorrente criado: aparece todo dia ${f.dia} para confirmar${f.fim ? `, até ${nomeMes(somaMes(f.fim, -1))}` : ""}.`;
       } else if (E.cartao) msg = "Lançado no cartão. Não saiu do saldo.";
       S.d.lancs.push(novo);
     }
@@ -1113,7 +1146,7 @@ function dataFixo(f, ym) {
 // Fixos que ainda não foram confirmados (nem pulados) no mês
 function fixosPendentes(ym) {
   return S.d.fixos
-    .filter((f) => f.inicio <= ym && !S.d.pulados.includes(f.id + "|" + ym) && !S.d.lancs.some((l) => l.fixo === f.id && l.data.startsWith(ym)))
+    .filter((f) => f.inicio <= ym && (!f.fim || ym < f.fim) && !S.d.pulados.includes(f.id + "|" + ym) && !S.d.lancs.some((l) => l.fixo === f.id && l.data.startsWith(ym)))
     .sort((a, b) => a.dia - b.dia);
 }
 async function confirmarFixoRapido(fid, ym) {
@@ -1127,10 +1160,10 @@ async function confirmarFixoRapido(fid, ym) {
 function gerirFixos() {
   const el = abrirCamada(`<div data-c></div>`, { aoFechar: () => desenhar() });
   const pintar = () => {
-    $("[data-c]", el).innerHTML = `<h2>Lançamentos fixos</h2>
-      <p style="text-align:center;color:#666;margin:-6px 0 10px;font-size:14px">Aparecem todo mês no Início para você confirmar com um toque. Para criar, marque <b>Todo mês</b> ao adicionar um lançamento.</p>
-      <div class="lista-escolha">${S.d.fixos.length ? S.d.fixos.map((f) => `<button data-e="${f.id}"><span class="bola">${ic(cat(f.cat).icone)}</span>
-        <span>${esc(f.nota || cat(f.cat).nome)}<br><small style="color:#777">${f.tipo === "receita" ? "Receita" : "Despesa"} · todo dia ${f.dia} · ${fmtR(f.valor)}${f.cartao ? " · " + esc(cartao(f.cartao).nome) : ""}</small></span><span class="ok">${ic("pencil")}</span></button>`).join("")
+    $("[data-c]", el).innerHTML = `<h2>Lançamentos recorrentes</h2>
+      <p style="text-align:center;color:#666;margin:-6px 0 10px;font-size:14px">Aparecem todo mês no Início para você confirmar com um toque. Para criar, toque em <b>↻ Repetir</b> ao adicionar um lançamento.</p>
+      <div class="lista-escolha">${S.d.fixos.length ? S.d.fixos.map((f) => `<button data-e="${f.id}">${bola(cat(f.cat).icone, cat(f.cat).cor)}
+        <span>${esc(f.nota || cat(f.cat).nome)}<br><small style="color:#777">${f.tipo === "receita" ? "Receita" : "Despesa"} · todo dia ${f.dia}${f.fim ? ` até ${nomeMes(somaMes(f.fim, -1))}` : ""} · ${fmtR(f.valor)}${f.cartao ? " · " + esc(cartao(f.cartao).nome) : ""}</small></span><span class="ok">${ic("pencil")}</span></button>`).join("")
         : `<p class="vazio" style="padding:24px">Nenhum lançamento fixo ainda.</p>`}</div>`;
     el.querySelectorAll("[data-e]").forEach((b) => (b.onclick = () => editarFixo(fixoPorId(b.dataset.e), pintar)));
   };
@@ -1206,7 +1239,7 @@ function gerirCategorias() {
     const cats = S.d.categorias.filter((c) => c.tipo === tipo);
     $("[data-c]", el).innerHTML = `<h2>Categorias</h2><div class="alternar" style="margin:0 auto 12px">
       <button data-t="despesa" class="${tipo === "despesa" ? "ativo" : ""}">Despesas</button><button data-t="receita" class="${tipo === "receita" ? "ativo" : ""}">Receitas</button></div>
-      <div class="lista-escolha">${cats.map((c) => `<button data-e="${c.id}"><span class="bola">${ic(c.icone)}</span><span>${esc(c.nome)}</span><span class="ok">${ic("pencil")}</span></button>`).join("")}
+      <div class="lista-escolha">${cats.map((c) => `<button data-e="${c.id}">${bola(c.icone, c.cor)}<span>${esc(c.nome)}</span><span class="ok">${ic("pencil")}</span></button>`).join("")}
       <button data-nova><span class="bola">${ic("plus")}</span><b>Nova categoria</b></button></div>`;
     el.querySelectorAll("[data-t]").forEach((b) => (b.onclick = () => { tipo = b.dataset.t; pintar(); }));
     el.querySelectorAll("[data-e]").forEach((b) => (b.onclick = () => editarCategoria(S.d.categorias.find((c) => c.id === b.dataset.e), tipo, pintar)));
@@ -1216,19 +1249,28 @@ function gerirCategorias() {
 }
 
 function editarCategoria(c, tipo, depois) {
-  let icone = c ? c.icone : ICONES_CATEGORIA[0];
+  let icone = c ? c.icone : "tag", cor = c ? c.cor || null : null;
+  const grupos = GRUPOS_ICONES.map(([nome, ns]) => `<div class="grupo-ic">${esc(nome)}</div>
+    <div class="grade-icones">${ns.map((n) => `<button type="button" data-i="${n}" class="${n === icone ? "sel" : ""}">${ic(n)}</button>`).join("")}</div>`).join("");
+  const cores = `<button type="button" data-cor="" class="cor-op padrao ${!cor ? "sel" : ""}" aria-label="Sem cor"></button>` +
+    CORES_CAT.map((h) => `<button type="button" data-cor="${h}" class="cor-op ${cor === h ? "sel" : ""}" style="background:${h}" aria-label="Cor"></button>`).join("");
   const el = abrirCamada(`<h2>${c ? "Editar categoria" : "Nova categoria"}</h2>
-    <form data-f><label>Nome<input name="nome" maxlength="24" value="${esc(c ? c.nome : "")}" required></label>
-      <label style="margin-bottom:6px">Ícone</label><div class="grade-icones">${ICONES_CATEGORIA.map((n) => `<button type="button" data-i="${n}" class="${n === icone ? "sel" : ""}">${ic(n)}</button>`).join("")}</div>
-      <div class="botoes"><button class="btn preto">Salvar</button>${c ? `<button type="button" class="btn perigo" data-apagar>Apagar categoria</button>` : ""}</div></form>`);
-  el.querySelectorAll("[data-i]").forEach((b) => (b.onclick = () => { icone = b.dataset.i; el.querySelectorAll("[data-i]").forEach((x) => x.classList.toggle("sel", x === b)); }));
+    <form data-f>
+      <div class="cat-prev"><span data-prev></span><label style="flex:1;margin:0">Nome<input name="nome" maxlength="24" value="${esc(c ? c.nome : "")}" required></label></div>
+      <div class="grupo-ic">Cor</div><div class="cores">${cores}</div>
+      ${grupos}
+      <div class="botoes" style="position:sticky;bottom:0;background:#fff;padding-top:10px"><button class="btn preto">Salvar</button>${c ? `<button type="button" class="btn perigo" data-apagar>Apagar categoria</button>` : ""}</div></form>`);
+  const prev = () => ($("[data-prev]", el).innerHTML = bola(icone, cor));
+  el.querySelectorAll("[data-i]").forEach((b) => (b.onclick = () => { icone = b.dataset.i; el.querySelectorAll("[data-i]").forEach((x) => x.classList.toggle("sel", x === b)); prev(); }));
+  el.querySelectorAll("[data-cor]").forEach((b) => (b.onclick = () => { cor = b.dataset.cor || null; el.querySelectorAll("[data-cor]").forEach((x) => x.classList.toggle("sel", x === b)); prev(); }));
+  prev();
   $("[data-f]", el).onsubmit = async (e) => {
     e.preventDefault();
     const nome = e.target.nome.value.trim();
     if (!nome) return;
     let alvo = c;
-    if (c) Object.assign(c, { nome, icone });
-    else { alvo = { id: novoId(), tipo, nome, icone }; S.d.categorias.push(alvo); }
+    if (c) { Object.assign(c, { nome, icone }); if (cor) c.cor = cor; else delete c.cor; }
+    else { alvo = { id: novoId(), tipo, nome, icone }; if (cor) alvo.cor = cor; S.d.categorias.push(alvo); }
     await salvar(); fechar(); aviso("Categoria salva.");
     setTimeout(() => depois && depois(alvo), 0);
   };

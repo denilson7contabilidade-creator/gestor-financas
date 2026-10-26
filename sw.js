@@ -1,5 +1,5 @@
 // Guarda os arquivos do app no celular para funcionar sem internet.
-const VERSAO = "gf-v4";
+const VERSAO = "gf-v5";
 const ARQUIVOS = [
   "./",
   "index.html",
