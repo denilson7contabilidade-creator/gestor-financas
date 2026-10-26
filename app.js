@@ -1,7 +1,7 @@
 "use strict";
 /* Gestor de Finanças — app instalável, dados guardados só no aparelho e criptografados. */
 
-const VERSAO_APP = "1.5";
+const VERSAO_APP = "1.6";
 const $ = (s, el = document) => el.querySelector(s);
 const esc = (t) => String(t ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const ic = (n) => `<svg class="ic" viewBox="0 0 24 24">${ICONES[n] || ICONES["circle-ellipsis"]}</svg>`;
@@ -101,15 +101,14 @@ function dadosIniciais() {
     fixos: [],
     pulados: [],
     categorias: [
-      D("Wayne", "shirt"), D("Cartões", "credit-card"), D("Compras", "shopping-cart"), D("Comida", "utensils"),
-      D("Juros", "percent"), D("Lazer", "tree-palm"), D("Moradia", "paint-roller"), D("Lar", "sofa"),
-      D("Pessoal", "gem"), D("Outras situações", "settings"), D("Moto", "motorbike"), D("Transporte", "bus"),
-      D("Gravidez", "baby"), D("Isabela", "briefcase"), D("Internet", "router"), D("Beleza", "scissors"),
-      D("Poupar Dinheiro", "piggy-bank"), D("Aposta Depositada", "dices"), D("Academia", "dumbbell"), D("Dentista", "toothbrush"),
-      D("Filhos", "users"), D("Educação", "book-open"), D("Roupas", "shirt"), D("Viagem", "plane"),
-      D("Saúde", "heart-pulse"), D("Presentes", "gift"), D("Eletrônicos", "smartphone"), D("Esportes", "trophy"),
-      R("Salário", "banknote"), R("Extra", "hand-coins"), R("Investimentos", "trending-up"),
-      R("Reembolso", "receipt"), R("Presente", "gift"), R("Outros", "circle-ellipsis"),
+      D("Alimentação", "utensils"), D("Mercado", "shopping-cart"), D("Moradia", "house"), D("Contas da casa", "zap"),
+      D("Internet e celular", "wifi"), D("Transporte", "bus"), D("Combustível", "fuel"), D("Saúde", "heart-pulse"),
+      D("Farmácia", "pill"), D("Educação", "book-open"), D("Lazer", "tree-palm"), D("Roupas", "shirt"),
+      D("Beleza", "scissors"), D("Academia", "dumbbell"), D("Filhos", "baby"), D("Pets", "paw-print"),
+      D("Assinaturas", "tv"), D("Presentes", "gift"), D("Viagem", "plane"), D("Cartões", "credit-card"),
+      D("Juros e taxas", "percent"), D("Outros", "circle-ellipsis"),
+      { ...R("Denilson Show", "rocket"), cor: "#E0560B" }, R("Salário", "banknote"), R("Extra", "hand-coins"),
+      R("Investimentos", "trending-up"), R("Reembolso", "receipt"), R("Presente", "gift"), R("Outros", "circle-ellipsis"),
     ],
     lancs: [],
   };
