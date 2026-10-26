@@ -1,7 +1,7 @@
 "use strict";
 /* Gestor de Finanças — app instalável, dados guardados só no aparelho e criptografados. */
 
-const VERSAO_APP = "1.0";
+const VERSAO_APP = "1.1";
 const $ = (s, el = document) => el.querySelector(s);
 const esc = (t) => String(t ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const ic = (n) => `<svg class="ic" viewBox="0 0 24 24">${ICONES[n] || ICONES["circle-ellipsis"]}</svg>`;
@@ -84,7 +84,7 @@ function gravarUsuario(u) {
 }
 
 // Sessão aberta (só na memória)
-const S = { u: null, chaveBytes: null, chave: null, d: null, aba: "inicio", mes: mesAtual(), graf: { tipo: "despesa", mes: mesAtual() }, relAno: Number(mesAtual().slice(0, 4)) };
+const S = { u: null, chaveBytes: null, chave: null, d: null, aba: "inicio", mes: mesAtual(), graf: { tipo: "despesa", mes: mesAtual() }, relAno: Number(mesAtual().slice(0, 4)), cmp: { modo: "mes", mes: mesAtual(), ano: Number(mesAtual().slice(0, 4)) } };
 
 async function salvar() {
   const pac = await cifrar(S.chave, enc.encode(JSON.stringify(S.d)));
@@ -135,6 +135,7 @@ async function abrirSessao(u, chaveBytes, dados) {
   S.mes = mesAtual();
   S.graf = { tipo: "despesa", mes: mesAtual() };
   S.relAno = Number(mesAtual().slice(0, 4));
+  S.cmp = { modo: "mes", mes: mesAtual(), ano: Number(mesAtual().slice(0, 4)) };
   S.aba = "inicio";
   try { navigator.storage && navigator.storage.persist && navigator.storage.persist(); } catch {}
 }
@@ -564,6 +565,65 @@ ligar.graficos = () => {
   if (rol && at) rol.scrollLeft = at.offsetLeft - rol.clientWidth / 2 + at.clientWidth / 2;
 };
 
+/* ----- Comparativo receitas x despesas ----- */
+function dadosPeriodo(filtro) {
+  let rec = 0, des = 0; const pc = { receita: {}, despesa: {} };
+  for (const l of S.d.lancs) {
+    if ((l.tipo !== "receita" && l.tipo !== "despesa") || !filtro(l.data)) continue;
+    if (l.tipo === "receita") rec += l.valor; else des += l.valor;
+    pc[l.tipo][l.cat] = (pc[l.tipo][l.cat] || 0) + l.valor;
+  }
+  const maior = (o) => { const e = Object.entries(o).sort((a, b) => b[1] - a[1])[0]; return e ? { id: e[0], v: e[1] } : null; };
+  return { rec, des, topRec: maior(pc.receita), topDes: maior(pc.despesa) };
+}
+
+function blocoComparativo() {
+  const c = S.cmp, mes = c.modo === "mes";
+  const pref = mes ? c.mes : String(c.ano);
+  const d = dadosPeriodo((dt) => dt.startsWith(pref));
+  const titulo = mes ? `${MESES[Number(c.mes.slice(5)) - 1]} ${c.mes.slice(0, 4)}` : String(c.ano);
+  const max = Math.max(d.rec, d.des, 1);
+  const pct = (a, b) => (b ? Math.round((a / b) * 100) : 0);
+  const dif = d.rec - d.des;
+
+  let resultado = "";
+  if (d.rec || d.des) {
+    resultado = dif >= 0
+      ? `<div class="cmp-res">Sobrou <b class="num">${fmtR(dif)}</b>${d.rec ? ` · ${pct(dif, d.rec)}% da receita` : ""}</div>`
+      : `<div class="cmp-res neg">Gastou <b class="num">${fmtR(-dif)}</b> a mais do que recebeu</div>`;
+  }
+
+  const pesa = (rot, top, total, extra) => {
+    if (!top) return `<div class="pesa vazio-p"><small>${rot}</small><span>Nenhum lançamento</span></div>`;
+    const k = cat(top.id);
+    return `<div class="pesa"><small>${rot}</small><div class="pesa-l"><span class="bola">${ic(k.icone)}</span><b>${esc(k.nome)}</b></div>
+      <div class="pesa-v"><span class="num">${fmt(top.v)}</span><strong class="num">${pct(top.v, total)}%</strong></div>
+      ${extra ? `<p>${extra}</p>` : ""}</div>`;
+  };
+  const extraDes = d.topDes && d.rec ? `Sozinha, consome <b>${pct(d.topDes.v, d.rec)}%</b> da sua receita.` : "";
+  const extraRec = d.topRec ? `É <b>${pct(d.topRec.v, d.rec)}%</b> de tudo que entrou.` : "";
+
+  // mini gráfico: 6 meses até o mês escolhido, ou os 12 meses do ano
+  const meses = mes ? Array.from({ length: 6 }, (_, i) => somaMes(c.mes, i - 5)) : Array.from({ length: 12 }, (_, i) => `${c.ano}-${p2(i + 1)}`);
+  const serie = meses.map((ym) => ({ ym, ...dadosPeriodo((dt) => dt.startsWith(ym)) }));
+  const mx = Math.max(1, ...serie.map((x) => Math.max(x.rec, x.des)));
+  const barras = serie.map((x) => `<button class="mb-col ${mes && x.ym === c.mes ? "sel" : ""}" data-cm="${x.ym}" title="${nomeMes(x.ym)}">
+      <span class="mb-par"><i class="r" style="height:${(x.rec / mx) * 100}%"></i><i class="d" style="height:${(x.des / mx) * 100}%"></i></span>
+      <small>${MES3[Number(x.ym.slice(5)) - 1].replace(".", "")}</small></button>`).join("");
+
+  return `<section class="secao"><h2>Receitas x Despesas</h2><div class="cartao-box cmp">
+    <div class="alternar" style="margin:14px auto 0;max-width:220px"><button data-cmodo="mes" class="${mes ? "ativo" : ""}">Mês</button><button data-cmodo="ano" class="${mes ? "" : "ativo"}">Ano</button></div>
+    <div class="ano-nav"><button data-cnav="-1">${ic("chevron-left")}</button><span style="text-transform:capitalize">${titulo}</span><button data-cnav="1">${ic("chevron-right")}</button></div>
+    <div class="cmp-barras">
+      <div class="cmp-l"><span>Receitas</span><div class="cmp-trilho"><i class="r" style="width:${(d.rec / max) * 100}%"></i></div><b class="num">${fmt(d.rec)}</b></div>
+      <div class="cmp-l"><span>Despesas</span><div class="cmp-trilho"><i class="d" style="width:${(d.des / max) * 100}%"></i></div><b class="num">${fmt(d.des)}</b></div>
+    </div>${resultado}
+    <div class="pesa-grade">${pesa("Despesa que mais pesa", d.topDes, d.des, extraDes)}${pesa("Receita que mais pesa", d.topRec, d.rec, extraRec)}</div>
+    <div class="mini-barras">${barras}</div>
+    <div class="mb-leg"><span><i class="r"></i>Receitas</span><span><i class="d"></i>Despesas</span></div>
+  </div></section>`;
+}
+
 /* ----- Relatórios ----- */
 function telaRelatorios() {
   const contas = S.d.contas.map((c) => {
@@ -596,7 +656,7 @@ function telaRelatorios() {
     return `<tr class="${ym === mesAtual() ? "atual" : ""}"><td>${m.slice(0, 3)}</td><td class="num">${fmt(t.rec)}</td><td class="num">${fmt(t.des)}</td><td class="num">${fmt(t.saldo)}</td></tr>`;
   }).join("");
 
-  return `<header class="cab"><h1>Relatórios</h1></header><div class="conteudo">
+  return `<header class="cab"><h1>Relatórios</h1></header><div class="conteudo">${blocoComparativo()}
     <section class="secao"><h2>Saldo das contas</h2><div class="cartao-box">${contas}
       <div class="total-linha"><span>Total</span><span class="num">${fmtR(totalContas)}</span></div></div></section>
     <section class="secao"><h2>Cartões de crédito</h2>${S.d.cartoes.length ? `<div class="cartao-box">${cartoes}</div>`
@@ -609,6 +669,13 @@ function telaRelatorios() {
     </div>`;
 }
 ligar.relatorios = () => {
+  document.querySelectorAll("[data-cmodo]").forEach((b) => (b.onclick = () => { S.cmp.modo = b.dataset.cmodo; if (S.cmp.modo === "ano") S.cmp.ano = Number(S.cmp.mes.slice(0, 4)); desenhar(); }));
+  document.querySelectorAll("[data-cnav]").forEach((b) => (b.onclick = () => {
+    const n = Number(b.dataset.cnav);
+    if (S.cmp.modo === "mes") S.cmp.mes = somaMes(S.cmp.mes, n); else S.cmp.ano += n;
+    desenhar();
+  }));
+  document.querySelectorAll("[data-cm]").forEach((b) => (b.onclick = () => { S.cmp.mes = b.dataset.cm; S.cmp.modo = "mes"; desenhar(); }));
   document.querySelectorAll("[data-ano]").forEach((b) => (b.onclick = () => { S.relAno += Number(b.dataset.ano); desenhar(); }));
   document.querySelectorAll("[data-pagar]").forEach((b) => (b.onclick = () => {
     const cid = b.dataset.pagar, ym = faturaAberta(cid), ant = somaMes(ym, -1);
