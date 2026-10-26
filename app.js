@@ -1,7 +1,7 @@
 "use strict";
 /* Gestor de Finanças — app instalável, dados guardados só no aparelho e criptografados. */
 
-const VERSAO_APP = "1.2";
+const VERSAO_APP = "1.3";
 const $ = (s, el = document) => el.querySelector(s);
 const esc = (t) => String(t ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const ic = (n) => `<svg class="ic" viewBox="0 0 24 24">${ICONES[n] || ICONES["circle-ellipsis"]}</svg>`;
@@ -98,6 +98,8 @@ function dadosIniciais() {
     versao: 1,
     contas: [{ id: novoId(), nome: "Conta principal", saldoInicial: 0 }],
     cartoes: [],
+    fixos: [],
+    pulados: [],
     categorias: [
       D("Wayne", "shirt"), D("Cartões", "credit-card"), D("Compras", "shopping-cart"), D("Comida", "utensils"),
       D("Juros", "percent"), D("Lazer", "tree-palm"), D("Moradia", "paint-roller"), D("Lar", "sofa"),
@@ -132,6 +134,8 @@ async function abrirSessao(u, chaveBytes, dados) {
     dados = JSON.parse(dec.decode(await decifrar(S.chave, pac)));
   }
   S.d = dados;
+  S.d.fixos ||= [];
+  S.d.pulados ||= [];
   S.mes = mesAtual();
   S.graf = { tipo: "despesa", mes: mesAtual() };
   S.relAno = Number(mesAtual().slice(0, 4));
@@ -156,29 +160,31 @@ async function trocarSenhaCom(u, chaveBytes, nova) {
   gravarUsuario(u);
 }
 
-// Mantém a conta aberta ao recarregar a tela (puxar para atualizar).
-// Fica só na memória desta janela do app: some ao fechar o app.
+// Mantém a conta aberta por até 10 horas sem uso, mesmo fechando o app.
+// Depois disso (ou ao tocar em "Sair"), a senha é pedida de novo.
+const TEMPO_SESSAO = 10 * 60 * 60 * 1000;
 function lembrarSessao() {
-  try { sessionStorage.setItem("gf_sessao", JSON.stringify({ id: S.u.id, k: b64(S.chaveBytes), aba: S.aba, ts: Date.now() })); } catch {}
+  try { localStorage.setItem("gf_sessao", JSON.stringify({ id: S.u.id, k: b64(S.chaveBytes), aba: S.aba, ts: Date.now() })); } catch {}
 }
 function marcarAtividade() {
   if (!S.u) return;
-  try { const x = JSON.parse(sessionStorage.getItem("gf_sessao")); if (x) { x.ts = Date.now(); x.aba = S.aba; sessionStorage.setItem("gf_sessao", JSON.stringify(x)); } } catch {}
+  try { const x = JSON.parse(localStorage.getItem("gf_sessao")); if (x) { x.ts = Date.now(); x.aba = S.aba; localStorage.setItem("gf_sessao", JSON.stringify(x)); } } catch {}
 }
 async function retomarSessao() {
   try {
-    const x = JSON.parse(sessionStorage.getItem("gf_sessao"));
-    if (!x || Date.now() - x.ts > 5 * 60 * 1000) { sessionStorage.removeItem("gf_sessao"); return false; }
+    sessionStorage.removeItem("gf_sessao"); // formato antigo
+    const x = JSON.parse(localStorage.getItem("gf_sessao"));
+    if (!x || Date.now() - x.ts > TEMPO_SESSAO) { localStorage.removeItem("gf_sessao"); return false; }
     const u = lerUsuarios().find((y) => y.id === x.id);
     if (!u) return false;
     await abrirSessao(u, deB64(x.k));
     if (x.aba) S.aba = x.aba;
     return true;
-  } catch { try { sessionStorage.removeItem("gf_sessao"); } catch {} return false; }
+  } catch { try { localStorage.removeItem("gf_sessao"); } catch {} return false; }
 }
 
 function sair() {
-  try { sessionStorage.removeItem("gf_sessao"); } catch {}
+  try { localStorage.removeItem("gf_sessao"); } catch {}
   S.u = S.chave = S.chaveBytes = S.d = null;
   fecharTudo();
   telaLogin();
@@ -212,9 +218,12 @@ function totaisMes(ym) {
   return { des, rec, cart, pagFat, saldo: rec - (des - cart) - pagFat };
 }
 
+// Saldo real da conta: só conta o que já aconteceu (até hoje)
 function saldoConta(id) {
   let s = conta(id).saldoInicial || 0;
+  const h = hoje();
   for (const l of S.d.lancs) {
+    if (l.data > h) continue;
     if (l.tipo === "receita" && l.conta === id) s += l.valor;
     else if (l.tipo === "despesa" && !l.cartao && l.conta === id) s -= l.valor;
     else if (l.tipo === "fatura" && l.conta === id) s -= l.valor;
@@ -466,9 +475,22 @@ function telaInicio() {
   const [a, m] = S.mes.split("-");
   const doMes = S.d.lancs.filter((l) => l.data.startsWith(S.mes))
     .sort((x, y) => y.data.localeCompare(x.data) || y.id.localeCompare(x.id));
-  let corpo = "";
+  const pend = fixosPendentes(S.mes);
+  let corpo = lembreteBackup();
+  if (pend.length) {
+    const pd = pend.filter((f) => f.tipo === "despesa").reduce((s, f) => s + f.valor, 0);
+    const pr = pend.filter((f) => f.tipo === "receita").reduce((s, f) => s + f.valor, 0);
+    corpo += `<div class="dia-cab fixos-cab"><span>${ic("repeat")} Fixos a confirmar</span><span class="num">${[pd ? `- ${fmt(pd)}` : "", pr ? `+ ${fmt(pr)}` : ""].filter(Boolean).join(" · ")}</span></div>`;
+    corpo += pend.map((f) => {
+      const c = cat(f.cat);
+      return `<div class="item pendente"><button class="pend-abrir" data-fixo="${f.id}"><span class="bola">${ic(c.icone)}</span>
+        <span class="meio"><div>${esc(f.nota || c.nome)}</div><small>dia ${dataCurta(dataFixo(f, S.mes))}${f.nota ? " · " + esc(c.nome) : ""}${f.cartao ? " · " + esc(cartao(f.cartao).nome) : ""}</small></span>
+        <span class="val num">${f.tipo === "despesa" ? "- " : "+ "}${fmt(f.valor)}</span></button>
+        <button class="pend-ok" data-confirmar="${f.id}" aria-label="Confirmar">${ic("check")}</button></div>`;
+    }).join("");
+  }
   if (!doMes.length) {
-    corpo = `<div class="vazio">${ic("receipt")}Nenhum lançamento em ${MESES[m - 1]}.<br>Toque no <b>+</b> para adicionar.</div>`;
+    corpo += `<div class="vazio">${ic("receipt")}Nenhum lançamento em ${MESES[m - 1]}.<br>Toque no <b>+</b> para adicionar.</div>`;
   } else {
     const dias = {};
     for (const l of doMes) (dias[l.data] ||= []).push(l);
@@ -477,47 +499,71 @@ function telaInicio() {
       const recDia = ls.filter((l) => l.tipo === "receita").reduce((s, l) => s + l.valor, 0);
       const res = [desDia ? `Despesas: ${fmt(desDia)}` : "", recDia ? `Receitas: ${fmt(recDia)}` : ""].filter(Boolean).join(" · ");
       corpo += `<div class="dia-cab"><span>${nomeDia(d)}</span><span class="num">${res}</span></div>`;
-      corpo += ls.map(itemLanc).join("");
+      corpo += ls.map((l) => itemLanc(l)).join("");
     }
   }
+  const saldoReal = S.d.contas.reduce((s, c) => s + saldoConta(c.id), 0);
   return `<header class="topo">
-      <div class="topo-linha"><h1>Gestor de Finanças</h1></div>
+      <div class="topo-linha"><h1>Gestor de Finanças</h1><button class="bt-busca" data-busca aria-label="Buscar">${ic("search")}</button></div>
       <div class="resumo">
         <button class="sel-mes" data-mes><small>${a}</small><b>${MES3[m - 1]} ▾</b></button>
         <div class="col"><span>Despesas</span><b class="num">${fmt(t.des)}</b></div>
         <div class="col"><span>Receitas</span><b class="num">${fmt(t.rec)}</b></div>
         <div class="col"><span>Saldo</span><b class="num">${fmt(t.saldo)}</b></div>
       </div>
-      ${t.cart ? `<div class="no-cartao">${ic("credit-card")}<span>No cartão (fora do saldo)</span><b class="num">${fmt(t.cart)}</b></div>` : ""}
+      <div class="faixa">
+        <button class="faixa-it" data-aba="relatorios">${ic("wallet")}<span>Nas contas hoje</span><b class="num">${fmtR(saldoReal)}</b></button>
+        ${t.cart ? `<div class="faixa-it">${ic("credit-card")}<span>No cartão no mês</span><b class="num">${fmtR(t.cart)}</b></div>` : ""}
+      </div>
     </header>${!instalado() && pedidoInstalar ? `<div class="instalar"><img src="icons/icon-192.png" alt=""><span>Instale o app na tela inicial.</span><button data-instalar>Instalar</button></div>` : ""}
     <div class="conteudo" id="lista">${corpo}</div>`;
 }
 
-function itemLanc(l) {
-  let icone, titulo, sub = "", sinal, extra = "";
+// Lembrete de backup: aparece uma vez por mês, até ser feito ou adiado
+function lembreteBackup() {
+  const u = S.u, agora = Date.now(), MES_MS = 30 * 864e5;
+  const ref = Math.max(...[u.ultimoBackup, u.criadoEm, u.adiouBackup].filter(Boolean).map((x) => new Date(x).getTime()));
+  if (!S.d.lancs.length || agora - ref < MES_MS) return "";
+  const txt = u.ultimoBackup ? `Seu último backup foi há ${Math.floor((agora - new Date(u.ultimoBackup)) / 864e5)} dias.` : "Você ainda não fez nenhum backup.";
+  return `<div class="lembrete">${ic("download")}<div><b>Hora do backup do mês</b><small>${txt} Ele protege seus lançamentos se trocar ou perder o celular.</small>
+    <div class="lembrete-bt"><button data-bk-fazer>Fazer backup</button><button data-bk-adiar>Agora não</button></div></div></div>`;
+}
+
+function itemLanc(l, comData) {
+  let icone, titulo, sub = "", sinal;
+  const partes = comData === true ? [dataCurta(l.data)] : [];
   if (l.tipo === "transf") {
     icone = "arrow-left-right"; titulo = l.nota || "Transferência"; sinal = "";
-    sub = `${esc(conta(l.conta).nome)} → ${esc(conta(l.destino).nome)}`;
+    partes.push(`${esc(conta(l.conta).nome)} → ${esc(conta(l.destino).nome)}`);
   } else if (l.tipo === "fatura") {
     icone = "credit-card"; titulo = l.nota || `Pagamento da fatura ${cartao(l.cartao).nome}`; sinal = "- ";
-    sub = `Fatura de ${nomeMes(l.fatura)} · ${esc(conta(l.conta).nome)}`;
+    partes.push(`Fatura de ${nomeMes(l.fatura)} · ${esc(conta(l.conta).nome)}`);
   } else {
     const c = cat(l.cat);
     icone = c.icone; titulo = l.nota || c.nome; sinal = l.tipo === "despesa" ? "- " : "+ ";
-    const partes = [];
     if (l.nota) partes.push(esc(c.nome));
-    if (l.cartao) { partes.push(`${ic("credit-card")}${esc(cartao(l.cartao).nome)}`); }
+    if (l.cartao) partes.push(`${ic("credit-card")}${esc(cartao(l.cartao).nome)}`);
     if (l.parc) partes.push(`${l.parc.n}/${l.parc.t}`);
-    sub = partes.join(" · ");
+    if (l.fixo) partes.push(`${ic("repeat")}Fixo`);
   }
+  sub = partes.join(" · ");
   return `<button class="item" data-lanc="${l.id}"><span class="bola">${ic(icone)}</span>
     <span class="meio"><div>${esc(titulo)}</div>${sub ? `<small>${sub}</small>` : ""}</span>
-    <span class="val num">${sinal}${fmt(l.valor)}</span>${extra}</button>`;
+    <span class="val num">${sinal}${fmt(l.valor)}</span></button>`;
 }
 
 ligar.inicio = () => {
   $("[data-mes]").onclick = async () => { const m = await escolherMes(S.mes); if (m) { S.mes = m; desenhar(); } };
-  $("#lista").onclick = (e) => { const b = e.target.closest("[data-lanc]"); if (b) abrirLanc(b.dataset.lanc); };
+  $("[data-busca]").onclick = abrirBusca;
+  $("#lista").onclick = (e) => {
+    const ok = e.target.closest("[data-confirmar]");
+    if (ok) return confirmarFixoRapido(ok.dataset.confirmar, S.mes);
+    const fx = e.target.closest("[data-fixo]");
+    if (fx) return abrirEditor(null, { fixo: fixoPorId(fx.dataset.fixo), ym: S.mes });
+    const b = e.target.closest("[data-lanc]"); if (b) abrirLanc(b.dataset.lanc);
+  };
+  const bkF = $("[data-bk-fazer]"); if (bkF) bkF.onclick = salvarBackup;
+  const bkA = $("[data-bk-adiar]"); if (bkA) bkA.onclick = () => { S.u.adiouBackup = new Date().toISOString(); gravarUsuario(S.u); desenhar(); };
   const bi = $("[data-instalar]"); if (bi) bi.onclick = instalarApp;
 };
 
@@ -718,7 +764,7 @@ function verFaturas(cid) {
       <p style="text-align:center;color:#777;margin:0 0 4px;font-size:14px">Vence ${dataCurta(vencimentoData(cid, ym))}</p>
       <div style="text-align:center;font-size:28px;font-weight:700" class="num">${fmtR(f.total)}</div>
       <p style="text-align:center;margin:2px 0 12px;font-size:14px;color:#555">${f.total === 0 ? "Sem compras" : f.falta === 0 ? "Fatura paga" : f.pago ? `Pago ${fmtR(f.pago)} · falta ${fmtR(f.falta)}` : "Não paga"}</p>
-      <div style="margin:0 -18px">${f.itens.map(itemLanc).join("") || `<p class="vazio" style="padding:20px">Nenhuma compra nesta fatura.</p>`}</div>
+      <div style="margin:0 -18px">${f.itens.map((l) => itemLanc(l, true)).join("") || `<p class="vazio" style="padding:20px">Nenhuma compra nesta fatura.</p>`}</div>
       <div class="botoes" style="margin-top:14px">${f.falta > 0 ? `<button class="btn preto" data-pg>Pagar esta fatura</button>` : ""}</div>`;
     el.querySelectorAll("[data-m]").forEach((b) => (b.onclick = () => { ym = somaMes(ym, Number(b.dataset.m)); pintar(); }));
     el.querySelectorAll("[data-lanc]").forEach((b) => (b.onclick = () => abrirLanc(b.dataset.lanc)));
@@ -762,6 +808,7 @@ function pagarFatura(cid, ym, existente) {
 function atualizarFundo() {
   setTimeout(() => {
     if (pilha.length && verFaturas.repintar && document.contains($("[data-c]"))) verFaturas.repintar();
+    if (abrirBusca.repintar && $("[data-q]")) abrirBusca.repintar();
     desenhar();
   }, 0);
 }
@@ -778,6 +825,7 @@ function telaPerfil() {
     <section class="secao"><h2>Cadastros</h2><div class="cartao-box">
       ${op("categorias", "tag", "Categorias", `${S.d.categorias.length} categorias`)}
       ${op("contas", "wallet", "Contas", "Onde fica seu dinheiro (banco, carteira…)")}
+      ${op("fixos", "repeat", "Lançamentos fixos", S.d.fixos.length ? `${S.d.fixos.length} todo mês` : "Aluguel, salário, internet…")}
       ${op("cartoes", "credit-card", "Cartões de crédito", S.d.cartoes.length ? S.d.cartoes.map((c) => c.nome).join(", ") : "Nenhum cadastrado")}
     </div></section>
     <section class="secao"><h2>Seus dados</h2><div class="cartao-box">
@@ -794,7 +842,7 @@ function telaPerfil() {
     </div>`;
 }
 ligar.perfil = () => {
-  const acoes = { categorias: gerirCategorias, contas: gerirContas, cartoes: gerirCartoes, backup: salvarBackup, restaurar: restaurarNoPerfil, csv: exportarCSV, senha: trocarSenha, codigo: gerarCodigo, sair: sairConfirmar };
+  const acoes = { fixos: gerirFixos, categorias: gerirCategorias, contas: gerirContas, cartoes: gerirCartoes, backup: salvarBackup, restaurar: restaurarNoPerfil, csv: exportarCSV, senha: trocarSenha, codigo: gerarCodigo, sair: sairConfirmar };
   document.querySelectorAll("[data-op]").forEach((b) => (b.onclick = () => acoes[b.dataset.op]()));
   const bi = $("[data-instalar]"); if (bi) bi.onclick = instalarApp;
 };
@@ -803,15 +851,31 @@ async function sairConfirmar() { if (await confirmar("Sair", "Você vai precisar
 
 /* ================= ADICIONAR / EDITAR ================= */
 
-function abrirEditor(l) {
+// Abre a tela de lançamento.
+//  abrirEditor()                          → novo lançamento
+//  abrirEditor(l)                         → editar um lançamento existente
+//  abrirEditor(null, { modelo: l })       → "lançar de novo" (novo, copiando de l)
+//  abrirEditor(null, { fixo: f, ym })     → confirmar um lançamento fixo do mês
+function abrirEditor(l, opc = {}) {
   const ultimo = (tipo) => { const x = [...S.d.lancs].reverse().find((y) => y.tipo === tipo && y.cat); return x ? x.cat : null; };
-  const E = l ? { ...l, expr: nf0.format(l.valor / 100).replace(/\./g, ""), parcelas: 1 }
-    : { tipo: "despesa", cat: null, expr: "", nota: "", data: hoje(), conta: S.d.contas[0]?.id, cartao: null, parcelas: 1, destino: S.d.contas[1]?.id };
-  if (!l && S.mes !== mesAtual()) E.data = `${S.mes}-01`;
   const editando = !!l;
+  const fonte = l || opc.modelo || opc.fixo;
+  const E = fonte
+    ? { tipo: fonte.tipo, cat: fonte.cat, nota: fonte.nota || "", conta: fonte.conta || S.d.contas[0]?.id, cartao: fonte.cartao || null,
+        destino: fonte.destino || S.d.contas[1]?.id, data: editando ? l.data : hoje(), expr: nf0.format(fonte.valor / 100).replace(/\./g, ""), parcelas: 1, fixar: false }
+    : { tipo: "despesa", cat: null, expr: "", nota: "", data: hoje(), conta: S.d.contas[0]?.id, cartao: null, parcelas: 1, destino: S.d.contas[1]?.id, fixar: false };
+  if (!fonte && S.mes !== mesAtual()) E.data = `${S.mes}-01`;
+  if (opc.fixo) E.data = dataFixo(opc.fixo, opc.ym);
+  if (E.conta && !S.d.contas.some((c) => c.id === E.conta)) E.conta = S.d.contas[0]?.id;
+  if (E.cartao && !S.d.cartoes.some((c) => c.id === E.cartao)) E.cartao = null;
+  let todasCats = false;
 
-  const el = abrirCamada(`<div class="add-cab"><div class="linha"><button data-x>Cancelar</button><b>${editando ? "Editar" : "Adicionar"}</b>
-      <button data-del>${editando ? ic("trash") : ""}</button></div>
+  const titulo = editando ? "Editar" : opc.fixo ? "Confirmar fixo" : opc.modelo ? "Lançar de novo" : "Adicionar";
+  const direita = editando
+    ? `<button data-repetir aria-label="Lançar de novo">${ic("copy-plus")}</button><button data-del aria-label="Apagar">${ic("trash")}</button>`
+    : opc.fixo ? `<button data-pular style="font-size:15px">Pular mês</button>` : "";
+  const el = abrirCamada(`<div class="add-cab"><div class="linha"><button data-x>Cancelar</button><b>${titulo}</b>
+      <span class="add-acoes">${direita}</span></div>
       <div class="alternar tres" data-tipos></div></div>
     <div class="add-corpo" data-corpo></div>
     <div class="teclado-area">
@@ -823,7 +887,6 @@ function abrirEditor(l) {
         <button data-k="1">1</button><button data-k="2">2</button><button data-k="3">3</button><button data-k="-">−</button>
         <button data-k=",">,</button><button data-k="0">0</button><button data-k="apagar">${ic("delete")}</button><button class="ok" data-ok>${ic("check")}</button>
       </div>
-      <input type="date" data-dataif style="position:absolute;opacity:0;pointer-events:none;width:1px;height:1px">
     </div>`, { tela: true });
 
   const nota = $("[data-nota]", el);
@@ -833,14 +896,16 @@ function abrirEditor(l) {
   function pintarTipos() {
     const t = (v, r) => `<button data-t="${v}" class="${E.tipo === v ? "ativo" : ""}">${r}</button>`;
     const box = $("[data-tipos]", el);
-    if (editando && E.tipo === "transf") box.innerHTML = t("transf", "Transferência");
-    else if (editando) box.innerHTML = t("despesa", "Despesa") + t("receita", "Receita");
+    if ((editando || opc.fixo) && E.tipo === "transf") box.innerHTML = t("transf", "Transferência");
+    else if (editando || opc.fixo) box.innerHTML = t("despesa", "Despesa") + t("receita", "Receita");
     else box.innerHTML = t("despesa", "Despesa") + t("receita", "Receita") + t("transf", "Transferência");
     box.style.gridTemplateColumns = `repeat(${box.children.length}, 1fr)`;
     box.querySelectorAll("[data-t]").forEach((b) => (b.onclick = () => {
       if (E.tipo === b.dataset.t) return;
-      E.tipo = b.dataset.t; E.cat = l && l.tipo === E.tipo ? l.cat : ultimo(E.tipo);
+      E.tipo = b.dataset.t; E.cat = fonte && fonte.tipo === E.tipo ? fonte.cat : ultimo(E.tipo);
       if (E.tipo !== "despesa") E.cartao = null;
+      if (E.tipo === "transf") E.fixar = false;
+      todasCats = false;
       pintarTipos(); pintarCorpo(); pintarChips();
     }));
   }
@@ -858,14 +923,25 @@ function abrirEditor(l) {
       }));
       return;
     }
-    const cats = S.d.categorias.filter((c) => c.tipo === E.tipo);
-    corpo.innerHTML = `<div class="grade-cat">${cats.map((c) => `<button data-c="${c.id}" class="${E.cat === c.id ? "sel" : ""}"><span class="bola">${ic(c.icone)}</span>${esc(c.nome)}</button>`).join("")}
-      <button data-novacat><span class="bola">${ic("plus")}</span>Nova</button></div>`;
+    // Mais usadas primeiro; mostra só as 12 principais até tocar em "Todas"
+    const cats = categoriasPorUso(E.tipo);
+    const LIM = 12;
+    let mostrar = cats;
+    if (!todasCats && cats.length > LIM + 1) {
+      mostrar = cats.slice(0, LIM);
+      const sel = cats.find((c) => c.id === E.cat);
+      if (sel && !mostrar.includes(sel)) mostrar = [...cats.slice(0, LIM - 1), sel];
+    }
+    const mais = mostrar.length < cats.length ? `<button data-todas><span class="bola">${ic("circle-ellipsis")}</span>Todas (${cats.length})</button>` : "";
+    corpo.innerHTML = cats.length
+      ? `<div class="grade-cat">${mostrar.map((c) => `<button data-c="${c.id}" class="${E.cat === c.id ? "sel" : ""}"><span class="bola">${ic(c.icone)}</span>${esc(c.nome)}</button>`).join("")}${mais}</div>`
+      : `<div class="vazio">${ic("tag")}Nenhuma categoria de ${E.tipo}.<br>Crie em <b>Perfil → Categorias</b>.</div>`;
     corpo.querySelectorAll("[data-c]").forEach((b) => (b.onclick = () => {
       E.cat = b.dataset.c;
       corpo.querySelectorAll("[data-c]").forEach((x) => x.classList.toggle("sel", x === b));
     }));
-    $("[data-novacat]", corpo).onclick = () => editarCategoria(null, E.tipo, (nova) => { E.cat = nova.id; pintarCorpo(); });
+    const bt = $("[data-todas]", corpo);
+    if (bt) bt.onclick = () => { todasCats = true; pintarCorpo(); };
   }
 
   function pintarChips() {
@@ -873,8 +949,10 @@ function abrirEditor(l) {
     if (E.tipo === "transf") { box.innerHTML = ""; return; }
     const pagoCom = E.cartao ? `<button class="chip cartao" data-pg>${ic("credit-card")}<span>${esc(cartao(E.cartao).nome)}</span></button>`
       : `<button class="chip" data-pg>${ic("wallet")}<span>${esc(conta(E.conta).nome)}</span></button>`;
-    const parc = E.cartao && !editando ? `<button class="chip" data-parc>${E.parcelas}x</button>` : "";
-    box.innerHTML = pagoCom + parc;
+    const parc = E.cartao && !editando && !opc.fixo && !E.fixar ? `<button class="chip" data-parc>${E.parcelas}x</button>` : "";
+    const podeFixar = !editando && !opc.fixo && E.parcelas === 1;
+    const fixo = podeFixar ? `<button class="chip ${E.fixar ? "cartao" : ""}" data-fixar>${ic("repeat")}<span>Todo mês</span></button>` : "";
+    box.innerHTML = pagoCom + parc + fixo;
     $("[data-pg]", box).onclick = async () => {
       const ops = S.d.contas.map((c) => ({ valor: "conta:" + c.id, rotulo: c.nome, icone: "wallet", grupo: "Sai do saldo", sub: "Dinheiro, Pix ou débito" }));
       if (E.tipo === "despesa") {
@@ -894,6 +972,12 @@ function abrirEditor(l) {
       const ops = Array.from({ length: 24 }, (_, i) => ({ valor: i + 1, rotulo: i ? `${i + 1}x` : "À vista (1x)", sub: total > 0 && i ? `${i + 1}x de ${fmtR(Math.floor(total / (i + 1)))}` : "" }));
       const v = await escolher("Parcelas", ops, E.parcelas);
       if (v) { E.parcelas = v; pintarChips(); }
+    };
+    const fx = $("[data-fixar]", box);
+    if (fx) fx.onclick = () => {
+      E.fixar = !E.fixar;
+      if (E.fixar) aviso(`Vai se repetir todo dia ${Number(E.data.slice(8))}. Você confirma a cada mês.`);
+      pintarChips();
     };
   }
 
@@ -923,11 +1007,17 @@ function abrirEditor(l) {
   }
   el.querySelectorAll("[data-k]").forEach((b) => (b.onclick = () => tecla(b.dataset.k)));
 
-  // Data
-  const dataIf = $("[data-dataif]", el);
-  const pintarData = () => ($("[data-datatxt]", el).textContent = E.data === hoje() ? "Hoje" : dataCurta(E.data));
-  $("[data-data]", el).onclick = () => { dataIf.value = E.data; try { dataIf.showPicker(); } catch { dataIf.click(); } };
-  dataIf.onchange = () => { if (dataIf.value) { E.data = dataIf.value; pintarData(); pintarChips(); } };
+  // Data: Hoje / Ontem / Anteontem / outra
+  const ontem = (n) => { const d = new Date(); d.setDate(d.getDate() - n); return `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())}`; };
+  const pintarData = () => ($("[data-datatxt]", el).textContent = E.data === hoje() ? "Hoje" : E.data === ontem(1) ? "Ontem" : dataCurta(E.data));
+  $("[data-data]", el).onclick = () => {
+    const op = (v, rot) => `<button type="button" class="${E.data === v ? "sel" : ""}" data-dt="${v}">${rot}<small>${dataCurta(v)}</small></button>`;
+    const sh = abrirCamada(`<h2>Data</h2><div class="datas-rapidas">${op(hoje(), "Hoje")}${op(ontem(1), "Ontem")}${op(ontem(2), "Anteontem")}</div>
+      <label style="margin-top:14px">Outra data<input type="date" data-outra value="${E.data}"></label>`);
+    const usar = (v) => { E.data = v; pintarData(); pintarChips(); fechar(); };
+    sh.querySelectorAll("[data-dt]").forEach((b) => (b.onclick = () => usar(b.dataset.dt)));
+    $("[data-outra]", sh).onchange = (e) => { if (e.target.value) usar(e.target.value); };
+  };
 
   $("[data-x]", el).onclick = () => fechar();
 
@@ -945,31 +1035,56 @@ function abrirEditor(l) {
     if (E.tipo === "transf") Object.assign(base, { conta: E.conta, destino: E.destino });
     else Object.assign(base, { cat: E.cat, conta: E.cartao ? null : E.conta, cartao: E.cartao || null });
 
+    let msg = "Lançamento adicionado.";
     if (editando) {
       const alvo = S.d.lancs.find((x) => x.id === l.id);
       Object.assign(alvo, base);
       if (!alvo.cartao) delete alvo.parc;
+      msg = "Alterações salvas.";
     } else if (E.cartao && E.parcelas > 1) {
       const n = E.parcelas, cada = Math.floor(r.valor / n), sobra = r.valor - cada * n, g = novoId();
       for (let i = 0; i < n; i++) S.d.lancs.push({ ...base, id: novoId() + i, valor: cada + (i === 0 ? sobra : 0), data: somaMesData(E.data, i), parc: { n: i + 1, t: n, g } });
-    } else S.d.lancs.push({ ...base, id: novoId() });
+      msg = `Lançado no cartão em ${n}x. Não saiu do saldo.`;
+    } else {
+      const novo = { ...base, id: novoId() };
+      if (opc.fixo) { novo.fixo = opc.fixo.id; msg = "Fixo confirmado."; }
+      else if (E.fixar) {
+        const f = { id: novoId(), tipo: base.tipo, cat: base.cat, valor: base.valor, nota: base.nota, conta: base.conta, cartao: base.cartao, dia: Number(E.data.slice(8)), inicio: E.data.slice(0, 7) };
+        S.d.fixos.push(f); novo.fixo = f.id;
+        msg = `Fixo criado: vai aparecer todo dia ${f.dia} para confirmar.`;
+      } else if (E.cartao) msg = "Lançado no cartão. Não saiu do saldo.";
+      S.d.lancs.push(novo);
+    }
 
     await salvar();
     fechar();
-    aviso(editando ? "Alterações salvas." : E.cartao ? `Lançado no cartão${E.parcelas > 1 ? ` em ${E.parcelas}x` : ""}. Não saiu do saldo.` : "Lançamento adicionado.");
+    aviso(msg);
     if (!editando && !E.data.startsWith(S.mes)) S.mes = E.data.slice(0, 7);
     atualizarFundo();
   };
 
+  // Lançar de novo (a partir de um lançamento aberto)
+  const rep = $("[data-repetir]", el);
+  if (rep) rep.onclick = () => { fechar(); setTimeout(() => abrirEditor(null, { modelo: l }), 60); };
+
+  // Pular um fixo neste mês
+  const pul = $("[data-pular]", el);
+  if (pul) pul.onclick = async () => {
+    S.d.pulados.push(opc.fixo.id + "|" + opc.ym);
+    await salvar(); fechar(); aviso("Pulado neste mês."); atualizarFundo();
+  };
+
   // Apagar
-  if (editando) $("[data-del]", el).onclick = async () => {
+  const del = $("[data-del]", el);
+  if (del) del.onclick = async () => {
     const alvo = S.d.lancs.find((x) => x.id === l.id);
     if (alvo.parc) {
       const v = await escolher("Apagar parcelado", [{ valor: "uma", rotulo: `Só esta parcela (${alvo.parc.n}/${alvo.parc.t})`, icone: "trash" }, { valor: "todas", rotulo: `Todas as ${alvo.parc.t} parcelas`, icone: "trash" }]);
       if (!v) return;
       S.d.lancs = v === "todas" ? S.d.lancs.filter((x) => !(x.parc && x.parc.g === alvo.parc.g)) : S.d.lancs.filter((x) => x.id !== alvo.id);
     } else {
-      if (!(await confirmar("Apagar lançamento", `${alvo.nota || cat(alvo.cat).nome} · ${fmtR(alvo.valor)}`, "Apagar", true))) return;
+      const txtFixo = alvo.fixo && fixoPorId(alvo.fixo) ? " Ele volta a aparecer como fixo a confirmar neste mês." : "";
+      if (!(await confirmar("Apagar lançamento", `${alvo.nota || cat(alvo.cat).nome} · ${fmtR(alvo.valor)}.${txtFixo}`, "Apagar", true))) return;
       S.d.lancs = S.d.lancs.filter((x) => x.id !== alvo.id);
     }
     await salvar(); fechar(); aviso("Lançamento apagado."); atualizarFundo();
@@ -977,6 +1092,109 @@ function abrirEditor(l) {
 
   if (!E.cat && E.tipo !== "transf") E.cat = ultimo(E.tipo);
   pintarTipos(); pintarCorpo(); pintarChips(); pintarVisor(); pintarData();
+}
+
+// Categorias ordenadas pelo uso nos últimos 120 dias (empate: ordem do cadastro)
+function categoriasPorUso(tipo) {
+  const lim = (() => { const d = new Date(); d.setDate(d.getDate() - 120); return `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())}`; })();
+  const uso = {};
+  for (const l of S.d.lancs) if (l.tipo === tipo && l.cat && l.data >= lim) uso[l.cat] = (uso[l.cat] || 0) + 1;
+  const cats = S.d.categorias.filter((c) => c.tipo === tipo);
+  return cats.map((c, i) => ({ c, i, n: uso[c.id] || 0 })).sort((a, b) => b.n - a.n || a.i - b.i).map((x) => x.c);
+}
+
+/* ================= LANÇAMENTOS FIXOS ================= */
+
+const fixoPorId = (id) => S.d.fixos.find((f) => f.id === id);
+function dataFixo(f, ym) {
+  const [a, m] = ym.split("-").map(Number);
+  return `${ym}-${p2(Math.min(f.dia, new Date(a, m, 0).getDate()))}`;
+}
+// Fixos que ainda não foram confirmados (nem pulados) no mês
+function fixosPendentes(ym) {
+  return S.d.fixos
+    .filter((f) => f.inicio <= ym && !S.d.pulados.includes(f.id + "|" + ym) && !S.d.lancs.some((l) => l.fixo === f.id && l.data.startsWith(ym)))
+    .sort((a, b) => a.dia - b.dia);
+}
+async function confirmarFixoRapido(fid, ym) {
+  const f = fixoPorId(fid);
+  if (!f) return;
+  const novo = { id: novoId(), tipo: f.tipo, valor: f.valor, nota: f.nota || "", data: dataFixo(f, ym), cat: f.cat, conta: f.cartao ? null : (S.d.contas.some((c) => c.id === f.conta) ? f.conta : S.d.contas[0].id), cartao: f.cartao && S.d.cartoes.some((c) => c.id === f.cartao) ? f.cartao : null, fixo: f.id };
+  S.d.lancs.push(novo);
+  await salvar(); aviso("Fixo confirmado."); desenhar();
+}
+
+function gerirFixos() {
+  const el = abrirCamada(`<div data-c></div>`, { aoFechar: () => desenhar() });
+  const pintar = () => {
+    $("[data-c]", el).innerHTML = `<h2>Lançamentos fixos</h2>
+      <p style="text-align:center;color:#666;margin:-6px 0 10px;font-size:14px">Aparecem todo mês no Início para você confirmar com um toque. Para criar, marque <b>Todo mês</b> ao adicionar um lançamento.</p>
+      <div class="lista-escolha">${S.d.fixos.length ? S.d.fixos.map((f) => `<button data-e="${f.id}"><span class="bola">${ic(cat(f.cat).icone)}</span>
+        <span>${esc(f.nota || cat(f.cat).nome)}<br><small style="color:#777">${f.tipo === "receita" ? "Receita" : "Despesa"} · todo dia ${f.dia} · ${fmtR(f.valor)}${f.cartao ? " · " + esc(cartao(f.cartao).nome) : ""}</small></span><span class="ok">${ic("pencil")}</span></button>`).join("")
+        : `<p class="vazio" style="padding:24px">Nenhum lançamento fixo ainda.</p>`}</div>`;
+    el.querySelectorAll("[data-e]").forEach((b) => (b.onclick = () => editarFixo(fixoPorId(b.dataset.e), pintar)));
+  };
+  pintar();
+}
+
+function editarFixo(f, depois) {
+  const dias = Array.from({ length: 31 }, (_, i) => `<option ${i + 1 === f.dia ? "selected" : ""}>${i + 1}</option>`).join("");
+  const cats = S.d.categorias.filter((c) => c.tipo === f.tipo);
+  const el = abrirCamada(`<h2>Editar fixo</h2><form data-f>
+    <label>Nota<input name="nota" maxlength="80" value="${esc(f.nota || "")}" placeholder="Ex.: Aluguel"></label>
+    <div class="dois"><label>Valor (R$)<input name="valor" inputmode="decimal" value="${nf2.format(f.valor / 100)}" required></label>
+    <label>Todo dia<select name="dia">${dias}</select></label></div>
+    <label>Categoria<select name="cat">${cats.map((c) => `<option value="${c.id}" ${c.id === f.cat ? "selected" : ""}>${esc(c.nome)}</option>`).join("")}</select></label>
+    <p style="font-size:13px;color:#777;margin:-4px 0 12px">As mudanças valem para os próximos meses. O que já foi confirmado não muda.</p>
+    <p class="erro" data-e></p>
+    <div class="botoes"><button class="btn preto">Salvar</button><button type="button" class="btn perigo" data-parar>Parar de repetir</button></div></form>`);
+  $("[data-f]", el).onsubmit = async (e) => {
+    e.preventDefault();
+    const fm = e.target, v = lerValor(fm.valor.value);
+    if (!(v > 0)) return ($("[data-e]", el).textContent = "Digite um valor válido.");
+    Object.assign(f, { nota: fm.nota.value.trim(), valor: v, dia: Number(fm.dia.value), cat: fm.cat.value });
+    await salvar(); fechar(); aviso("Fixo atualizado."); setTimeout(depois, 0);
+  };
+  $("[data-parar]", el).onclick = async () => {
+    if (!(await confirmar("Parar de repetir", "Ele deixa de aparecer nos próximos meses. Os lançamentos já confirmados continuam.", "Parar", true))) return;
+    S.d.fixos = S.d.fixos.filter((x) => x.id !== f.id);
+    await salvar(); fechar(); aviso("Não vai mais se repetir."); setTimeout(depois, 0);
+  };
+}
+
+/* ================= BUSCA ================= */
+
+function abrirBusca() {
+  const el = abrirCamada(`<div class="busca-cab"><button data-x aria-label="Voltar">${ic("arrow-left")}</button>
+      <input data-q type="search" placeholder="Buscar por nota, categoria ou valor" autocomplete="off"></div>
+    <div class="busca-res" data-r><p class="vazio">${ic("search")}Digite pelo menos 2 letras.</p></div>`, { tela: true });
+  const q = $("[data-q]", el), res = $("[data-r]", el);
+  $("[data-x]", el).onclick = () => fechar();
+  const sem = (t) => String(t || "").toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
+  const buscar = () => {
+    const t = sem(q.value.trim());
+    if (t.length < 2) { res.innerHTML = `<p class="vazio">${ic("search")}Digite pelo menos 2 letras.</p>`; return; }
+    const achados = S.d.lancs.filter((l) => {
+      const txt = [l.nota, l.cat && cat(l.cat).nome, l.cartao && cartao(l.cartao).nome, l.conta && conta(l.conta).nome, fmt(l.valor), l.tipo === "fatura" ? "fatura" : "", l.tipo === "transf" ? "transferencia" : ""].map(sem).join(" ");
+      return txt.includes(t);
+    }).sort((a, b) => b.data.localeCompare(a.data));
+    if (!achados.length) { res.innerHTML = `<p class="vazio">${ic("search")}Nada encontrado.</p>`; return; }
+    const des = achados.filter((l) => l.tipo === "despesa").reduce((s, l) => s + l.valor, 0);
+    const rec = achados.filter((l) => l.tipo === "receita").reduce((s, l) => s + l.valor, 0);
+    let html = `<div class="busca-tot">${achados.length} lançamento${achados.length > 1 ? "s" : ""}${des ? ` · despesas <b class="num">${fmtR(des)}</b>` : ""}${rec ? ` · receitas <b class="num">${fmtR(rec)}</b>` : ""}</div>`;
+    let mesAtualGrupo = "";
+    for (const l of achados.slice(0, 300)) {
+      const ym = l.data.slice(0, 7);
+      if (ym !== mesAtualGrupo) { mesAtualGrupo = ym; html += `<div class="dia-cab"><span style="text-transform:capitalize">${MESES[Number(ym.slice(5)) - 1]} ${ym.slice(0, 4)}</span></div>`; }
+      html += itemLanc(l, true);
+    }
+    res.innerHTML = html;
+  };
+  q.oninput = buscar;
+  res.onclick = (e) => { const b = e.target.closest("[data-lanc]"); if (b) abrirLanc(b.dataset.lanc); };
+  buscar.repintar = buscar;
+  abrirBusca.repintar = buscar;
+  setTimeout(() => q.focus(), 250);
 }
 
 /* ================= CADASTROS ================= */
@@ -1208,11 +1426,12 @@ async function exportarCSV() {
 
 /* ================= INÍCIO ================= */
 
-// Bloqueia de novo se o app ficar mais de 5 minutos em segundo plano
+// Bloqueia de novo depois de 10 horas sem uso
 let escondidoEm = 0;
 document.addEventListener("visibilitychange", () => {
   if (document.hidden) { escondidoEm = Date.now(); marcarAtividade(); }
-  else if (S.u && escondidoEm && Date.now() - escondidoEm > 5 * 60 * 1000) { sair(); aviso("Por segurança, entre novamente."); }
+  else if (S.u && escondidoEm && Date.now() - escondidoEm > TEMPO_SESSAO) { sair(); aviso("Por segurança, entre novamente."); }
+  else marcarAtividade();
 });
 
 if ("serviceWorker" in navigator && location.protocol === "https:") {
