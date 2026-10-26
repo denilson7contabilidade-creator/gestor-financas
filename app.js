@@ -1,7 +1,7 @@
 "use strict";
 /* Gestor de Finanças — app instalável, dados guardados só no aparelho e criptografados. */
 
-const VERSAO_APP = "1.8";
+const VERSAO_APP = "1.9";
 const $ = (s, el = document) => el.querySelector(s);
 const esc = (t) => String(t ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const ic = (n) => `<svg class="ic" viewBox="0 0 24 24">${ICONES[n] || ICONES["circle-ellipsis"]}</svg>`;
@@ -242,6 +242,55 @@ function sair() {
   S.u = S.chave = S.chaveBytes = S.d = null;
   fecharTudo();
   telaLogin();
+}
+
+/* ================= TEMA (cor do app) ================= */
+// claro: true quando o fundo do topo é escuro e o texto precisa ser branco
+const TEMAS = [
+  { id: "laranja", nome: "Laranja", fundo: "#E0560B", suave: "#FBE2D2", graf: "#E0560B", claro: false },
+  { id: "pessego", nome: "Pêssego", fundo: "#F5C6A0", suave: "#FCEBDD", graf: "#E07A3A", claro: false },
+  { id: "areia", nome: "Areia", fundo: "#E6DFD3", suave: "#F4F0EA", graf: "#8C7355", claro: false },
+  { id: "azulclaro", nome: "Azul claro", fundo: "#B9DCF5", suave: "#E8F3FC", graf: "#2B7BBF", claro: false },
+  { id: "menta", nome: "Menta", fundo: "#B5E3CB", suave: "#E7F6EE", graf: "#2E8B57", claro: false },
+  { id: "lilas", nome: "Lilás", fundo: "#D8CCF0", suave: "#F1ECFA", graf: "#7550B8", claro: false },
+  { id: "azul", nome: "Azul", fundo: "#1F5FAD", suave: "#E3ECF8", graf: "#1F5FAD", claro: true },
+  { id: "verde", nome: "Verde", fundo: "#2C7A4E", suave: "#E2F1E8", graf: "#2C7A4E", claro: true },
+  { id: "roxo", nome: "Roxo", fundo: "#5E43A0", suave: "#ECE7F6", graf: "#5E43A0", claro: true },
+  { id: "rosa", nome: "Rosa", fundo: "#C9467A", suave: "#FBE5EE", graf: "#C9467A", claro: true },
+  { id: "vinho", nome: "Vinho", fundo: "#7D2433", suave: "#F6E4E7", graf: "#9E2F42", claro: true },
+  { id: "grafite", nome: "Grafite", fundo: "#2A2A2A", suave: "#EEEEEE", graf: "#555555", claro: true },
+];
+const temaAtual = () => { try { return TEMAS.find((t) => t.id === localStorage.getItem("gf_tema")) || TEMAS[0]; } catch { return TEMAS[0]; } };
+function aplicarTema(t = temaAtual()) {
+  const r = document.documentElement;
+  r.style.setProperty("--fundo", t.fundo);
+  r.style.setProperty("--fundo-suave", t.suave);
+  r.style.setProperty("--laranja-graf", t.graf);
+  r.dataset.contraste = t.claro ? "claro" : "escuro";
+  const m = document.querySelector('meta[name="theme-color"]');
+  if (m) m.content = t.fundo;
+  CORES[1] = t.graf;
+  CORES[3] = clarear(t.graf, 0.55);
+}
+// mistura uma cor com branco (0 = igual, 1 = branco)
+function clarear(hex, q) {
+  const n = parseInt(hex.slice(1), 16), c = [n >> 16, (n >> 8) & 255, n & 255].map((v) => Math.round(v + (255 - v) * q));
+  return "#" + c.map((v) => v.toString(16).padStart(2, "0")).join("");
+}
+function escolherTema() {
+  const atual = temaAtual();
+  const el = abrirCamada(`<h2>Cor do app</h2>
+    <p style="text-align:center;color:#666;margin:-6px 0 14px;font-size:14px">Toque numa cor para ver na hora. Vale para este celular.</p>
+    <div class="temas">${TEMAS.map((t) => `<button data-tema="${t.id}" class="${t.id === atual.id ? "sel" : ""}">
+      <span class="tema-amostra" style="background:${t.fundo}"><i style="background:${t.claro ? "#fff" : "#111"}"></i><i style="background:${t.graf}"></i></span>${t.nome}</button>`).join("")}</div>
+    <div class="botoes" style="margin-top:16px"><button class="btn preto" data-ok>Pronto</button></div>`, { aoFechar: () => desenhar() });
+  el.querySelectorAll("[data-tema]").forEach((b) => (b.onclick = () => {
+    try { localStorage.setItem("gf_tema", b.dataset.tema); } catch {}
+    aplicarTema();
+    el.querySelectorAll("[data-tema]").forEach((x) => x.classList.toggle("sel", x === b));
+    desenhar();
+  }));
+  $("[data-ok]", el).onclick = () => fechar();
 }
 
 /* ================= CÁLCULOS ================= */
@@ -904,6 +953,9 @@ function telaPerfil() {
       ${op("restaurar", "upload", "Restaurar backup", "Trazer dados de outro celular")}
       ${op("csv", "file-spreadsheet", "Exportar planilha", "Arquivo para abrir no Excel")}
     </div></section>
+    <section class="secao"><h2>Aparência</h2><div class="cartao-box">
+      ${op("tema", "palette", "Cor do app", temaAtual().nome)}
+    </div></section>
     <section class="secao"><h2>Segurança</h2><div class="cartao-box">
       ${op("senha", "key-round", "Trocar senha", "")}
       ${op("codigo", "lock", "Gerar novo código de recuperação", "O código antigo deixa de valer")}
@@ -914,7 +966,7 @@ function telaPerfil() {
     </div>`;
 }
 ligar.perfil = () => {
-  const acoes = { fixos: gerirFixos, categorias: gerirCategorias, contas: gerirContas, cartoes: gerirCartoes, backup: salvarBackup, restaurar: restaurarNoPerfil, csv: exportarCSV, senha: trocarSenha, codigo: gerarCodigo, sair: sairConfirmar };
+  const acoes = { tema: escolherTema, fixos: gerirFixos, categorias: gerirCategorias, contas: gerirContas, cartoes: gerirCartoes, backup: salvarBackup, restaurar: restaurarNoPerfil, csv: exportarCSV, senha: trocarSenha, codigo: gerarCodigo, sair: sairConfirmar };
   document.querySelectorAll("[data-op]").forEach((b) => (b.onclick = () => acoes[b.dataset.op]()));
   const bi = $("[data-instalar]"); if (bi) bi.onclick = instalarApp;
   $("[data-atualizar]").onclick = procurarAtualizacao;
@@ -1621,4 +1673,5 @@ try {
 } catch {}
 window.addEventListener("pagehide", () => { if (!document.hidden) marcarAtividade(); });
 
+aplicarTema();
 retomarSessao().then((ok) => (ok ? desenhar() : telaLogin()));
