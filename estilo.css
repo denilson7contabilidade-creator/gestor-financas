@@ -513,3 +513,15 @@ i.pi { background: var(--laranja-graf); }
 .dia-cab > span:last-child { white-space: nowrap; text-align: right; }
 .dia-cab .dd, .dia-cab .dr { font-weight: 600; }
 .dia-cab .dr { margin-left: 6px; }
+
+/* ----- v2.5 ----- */
+.faixa-it > span { white-space: normal; line-height: 1.15; align-items: flex-start; }
+.faixa-it > span svg.ic { flex: none; margin-top: 1px; }
+.inv-tit { font-size: 13px; font-weight: 600; color: #555; margin: 4px 2px -4px; }
+.grade-inv { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.grade-inv button { display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 10px 4px; border-radius: 14px; border: 1.5px solid #E2E2E2; text-align: center; min-width: 0; }
+.grade-inv button.sel { border-color: var(--preto); background: var(--fundo-suave); }
+.grade-inv .gi-n { font-size: 13px; font-weight: 600; line-height: 1.15; max-width: 100%; overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.grade-inv small { font-size: 11.5px; color: var(--cinza); }
+.grade-inv .bola { width: 40px; height: 40px; }
+.grade-inv .bola svg.ic { width: 20px; height: 20px; }

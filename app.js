@@ -1,7 +1,7 @@
 "use strict";
 /* Gestor de Finanças — app instalável, dados guardados só no aparelho e criptografados. */
 
-const VERSAO_APP = "2.4";
+const VERSAO_APP = "2.5";
 const $ = (s, el = document) => el.querySelector(s);
 const esc = (t) => String(t ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const ic = (n) => `<svg class="ic" viewBox="0 0 24 24">${ICONES[n] || ICONES["circle-ellipsis"]}</svg>`;
@@ -632,6 +632,8 @@ function telaInicio() {
     }
   }
   const saldoReal = S.d.contas.reduce((s, c) => s + saldoConta(c.id), 0);
+  // soma das faturas de todos os cartões que vencem no mês exibido
+  const fatMes = S.d.cartoes.reduce((s, c) => s + infoFatura(c.id, S.mes).total, 0);
   return `<header class="topo">
       <div class="topo-linha"><h1>Gestor de Finanças</h1><button class="bt-busca" data-busca aria-label="Buscar">${ic("search")}</button></div>
       <div class="resumo">
@@ -641,9 +643,9 @@ function telaInicio() {
         <div class="col"><span>Saldo</span><b class="num">${fmt(t.saldo)}</b></div>
       </div>
       <div class="faixa">
-        <button class="faixa-it" data-aba="relatorios"><span>${ic("wallet")}Nas contas</span><b class="num">${fmtR(saldoReal)}</b></button>
+        <button class="faixa-it" data-aba="relatorios"><span>${ic("wallet")}Saldo em conta</span><b class="num">${fmtR(saldoReal)}</b></button>
         ${S.d.invest.length ? `<button class="faixa-it" data-abririnv><span>${ic("piggy-bank")}Investido</span><b class="num">${fmtR(totalInvestido())}</b></button>` : ""}
-        ${t.cart ? `<div class="faixa-it"><span>${ic("credit-card")}No cartão</span><b class="num">${fmtR(t.cart)}</b></div>` : ""}
+        ${fatMes ? `<button class="faixa-it" data-aba="relatorios"><span>${ic("credit-card")}Faturas cartões</span><b class="num">${fmtR(fatMes)}</b></button>` : ""}
       </div>
     </header>${faixaInstalar("Instale o app na tela inicial.")}
     <div class="conteudo" id="lista">${corpo}</div>`;
@@ -1148,8 +1150,10 @@ function abrirEditor(l, opc = {}) {
       }
       if (!S.d.invest.some((i) => i.id === E.inv)) E.inv = S.d.invest[0].id;
       const dica = { aplic: "Tira da conta e coloca no investimento. Não conta como despesa.", resg: "Tira do investimento e volta para a conta. Não conta como receita.", rend: "Quanto o investimento rendeu (ou perdeu). O dinheiro continua aplicado." }[E.mov];
-      const inv = invest(E.inv);
-      const blocoInv = `<button class="escolha-conta" data-escinv>${bola(inv.icone, corInv(inv))}<span><small>Investimento</small>${esc(inv.nome)} · <span class="num">${fmtR(saldoInv(E.inv))}</span></span></button>`;
+      const titInv = E.mov === "aplic" ? "Para qual investimento?" : E.mov === "resg" ? "De qual investimento?" : "Qual investimento?";
+      const blocoInv = `<div class="inv-tit">${titInv}</div><div class="grade-inv">${S.d.invest.map((i) => `<button data-escinv="${i.id}" class="${i.id === E.inv ? "sel" : ""}">${bola(i.icone, corInv(i))}
+          <span class="gi-n">${esc(i.nome)}</span><small class="num">${fmtR(saldoInv(i.id))}</small></button>`).join("")}
+        <button data-novoinv>${`<span class="bola">${ic("plus")}</span>`}<span class="gi-n">Novo investimento</span><small>CDB, poupança, cripto…</small></button></div>`;
       const blocoConta = `<button class="escolha-conta" data-escconta><span class="bola">${ic("wallet")}</span><span><small>${E.mov === "aplic" ? "Sai da conta" : "Volta para a conta"}</small>${esc(conta(E.conta).nome)} · <span class="num">${fmtR(saldoConta(E.conta))}</span></span></button>`;
       corpo.innerHTML = `<div class="transf">
         <div class="mov-sel">${Object.entries(MOVS).map(([k, r]) => `<button data-mv="${k}" class="${E.mov === k ? "sel" : ""}" ${editando && k !== E.mov ? "disabled" : ""}>${r}</button>`).join("")}</div>
@@ -1158,13 +1162,8 @@ function abrirEditor(l, opc = {}) {
           : blocoInv + `<div class="mov-sel dois-op"><button data-pd="0" class="${!E.perda ? "sel" : ""}">Rendeu</button><button data-pd="1" class="${E.perda ? "sel" : ""}">Perdeu</button></div>`}</div>`;
       corpo.querySelectorAll("[data-mv]").forEach((b) => (b.onclick = () => { E.mov = b.dataset.mv; pintarCorpo(); }));
       corpo.querySelectorAll("[data-pd]").forEach((b) => (b.onclick = () => { E.perda = b.dataset.pd === "1"; pintarCorpo(); }));
-      $("[data-escinv]", corpo).onclick = async () => {
-        const ops = S.d.invest.map((i) => ({ valor: i.id, rotulo: i.nome, icone: i.icone, sub: `${i.tipo} · ${fmtR(saldoInv(i.id))}` }));
-        ops.push({ valor: "novo", rotulo: "Novo investimento", icone: "plus" });
-        const v = await escolher("Qual investimento?", ops, E.inv);
-        if (v === "novo") return editarInvest(null, (n) => { if (n) E.inv = n.id; pintarCorpo(); });
-        if (v) { E.inv = v; pintarCorpo(); }
-      };
+      corpo.querySelectorAll("[data-escinv]").forEach((b) => (b.onclick = () => { E.inv = b.dataset.escinv; pintarCorpo(); }));
+      $("[data-novoinv]", corpo).onclick = () => editarInvest(null, (n) => { if (n) E.inv = n.id; pintarCorpo(); });
       const ec = $("[data-escconta]", corpo);
       if (ec) ec.onclick = async () => {
         const v = await escolher("Qual conta?", S.d.contas.map((c) => ({ valor: c.id, rotulo: c.nome, icone: "wallet", sub: fmtR(saldoConta(c.id)) })), E.conta);
