@@ -1,7 +1,7 @@
 "use strict";
 /* Gestor de Finanças — app instalável, dados guardados só no aparelho e criptografados. */
 
-const VERSAO_APP = "2.2";
+const VERSAO_APP = "2.3";
 const $ = (s, el = document) => el.querySelector(s);
 const esc = (t) => String(t ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const ic = (n) => `<svg class="ic" viewBox="0 0 24 24">${ICONES[n] || ICONES["circle-ellipsis"]}</svg>`;
@@ -159,6 +159,7 @@ function dadosIniciais() {
     cartoes: [],
     fixos: [],
     pulados: [],
+    invest: [],
     categorias: [
       ...DESPESAS_PADRAO.map(([n, i]) => D(n, i)),
       ...RECEITAS_PADRAO.map(([n, i]) => R(n, i)),
@@ -188,6 +189,7 @@ async function abrirSessao(u, chaveBytes, dados) {
   S.d = dados;
   S.d.fixos ||= [];
   S.d.pulados ||= [];
+  S.d.invest ||= [];
   const migrou = migrarCategorias(S.d);
   S.mes = mesAtual();
   S.graf = { tipo: "despesa", mes: mesAtual() };
@@ -326,15 +328,17 @@ function totaisMes(ym) {
 }
 
 // Saldo real da conta: só conta o que já aconteceu (até hoje)
-function saldoConta(id) {
+function saldoConta(id, ate) {
   let s = conta(id).saldoInicial || 0;
-  const h = hoje();
+  const h = ate || hoje();
   for (const l of S.d.lancs) {
     if (l.data > h) continue;
     if (l.tipo === "receita" && l.conta === id) s += l.valor;
     else if (l.tipo === "despesa" && !l.cartao && l.conta === id) s -= l.valor;
     else if (l.tipo === "fatura" && l.conta === id) s -= l.valor;
     else if (l.tipo === "transf") { if (l.conta === id) s -= l.valor; if (l.destino === id) s += l.valor; }
+    else if (l.tipo === "aplic" && l.conta === id) s -= l.valor;
+    else if (l.tipo === "resg" && l.conta === id) s += l.valor;
   }
   return s;
 }
@@ -637,6 +641,7 @@ function telaInicio() {
       </div>
       <div class="faixa">
         <button class="faixa-it" data-aba="relatorios">${ic("wallet")}<span>Nas contas hoje</span><b class="num">${fmtR(saldoReal)}</b></button>
+        ${S.d.invest.length ? `<button class="faixa-it" data-abririnv>${ic("piggy-bank")}<span>Investido</span><b class="num">${fmtR(totalInvestido())}</b></button>` : ""}
         ${t.cart ? `<div class="faixa-it">${ic("credit-card")}<span>No cartão no mês</span><b class="num">${fmtR(t.cart)}</b></div>` : ""}
       </div>
     </header>${faixaInstalar("Instale o app na tela inicial.")}
@@ -656,7 +661,12 @@ function lembreteBackup() {
 function itemLanc(l, comData) {
   let icone, titulo, sub = "", sinal, cor = null;
   const partes = comData === true ? [dataCurta(l.data)] : [];
-  if (l.tipo === "transf") {
+  if (ehInvest(l.tipo)) {
+    const i = invest(l.inv);
+    icone = i.icone; cor = corInv(i); sinal = l.tipo === "rend" ? (l.perda ? "- " : "+ ") : "";
+    titulo = l.nota || (l.tipo === "aplic" ? `Aplicação · ${i.nome}` : l.tipo === "resg" ? `Resgate · ${i.nome}` : `${l.perda ? "Perda" : "Rendimento"} · ${i.nome}`);
+    partes.push(l.tipo === "aplic" ? `${esc(conta(l.conta).nome)} → ${esc(i.nome)}` : l.tipo === "resg" ? `${esc(i.nome)} → ${esc(conta(l.conta).nome)}` : "Investimento");
+  } else if (l.tipo === "transf") {
     icone = "arrow-left-right"; titulo = l.nota || "Transferência"; sinal = "";
     partes.push(`${esc(conta(l.conta).nome)} → ${esc(conta(l.destino).nome)}`);
   } else if (l.tipo === "fatura") {
@@ -679,6 +689,7 @@ function itemLanc(l, comData) {
 ligar.inicio = () => {
   $("[data-mes]").onclick = async () => { const m = await escolherMes(S.mes); if (m) { S.mes = m; desenhar(); } };
   $("[data-busca]").onclick = abrirBusca;
+  const ai = $("[data-abririnv]"); if (ai) ai.onclick = abrirInvestimentos;
   $("#lista").onclick = (e) => {
     const ok = e.target.closest("[data-confirmar]");
     if (ok) return confirmarFixoRapido(ok.dataset.confirmar, S.mes);
@@ -918,6 +929,11 @@ function telaRelatorios() {
   return `<header class="cab"><h1>Relatórios</h1></header><div class="conteudo">${blocoComparativo()}
     <section class="secao"><h2>Saldo das contas</h2><div class="cartao-box">${contas}
       <div class="total-linha"><span>Total</span><span class="num">${fmtR(totalContas)}</span></div></div></section>
+    <section class="secao"><h2>Investimentos e patrimônio</h2><div class="cartao-box">${S.d.invest.length
+      ? `<div class="linha-opc"><span class="bola">${ic("trending-up")}</span><span class="meio">Patrimônio total<small>Contas + investimentos</small></span><b class="num">${fmtR(patrimonio())}</b></div>
+         <div class="linha-opc"><span class="bola">${ic("piggy-bank")}</span><span class="meio">Investido<small>Rendeu ${sinalR(movsPeriodo(mesAtual().slice(0, 4)).rend)} em ${mesAtual().slice(0, 4)}</small></span><b class="num">${fmtR(totalInvestido())}</b></div>
+         <button class="linha-opc" data-abririnv><span class="bola">${ic("chart-line")}</span><span class="meio">Ver investimentos<small>Evolução, metas e onde está seu dinheiro</small></span><span class="seta">${ic("chevron-right")}</span></button>`
+      : `<button class="linha-opc" data-abririnv><span class="bola">${ic("plus")}</span><span class="meio">Começar a acompanhar investimentos<small>Aplicações não contam como despesa. Veja seu patrimônio crescer.</small></span></button>`}</div></section>
     <section class="secao"><h2>Cartões de crédito</h2>${S.d.cartoes.length ? `<div class="cartao-box">${cartoes}</div>`
       : `<div class="cartao-box"><button class="linha-opc" data-novocartao><span class="bola">${ic("plus")}</span><span class="meio">Cadastrar um cartão<small>Compras no cartão não saem do saldo até você pagar a fatura.</small></span></button></div>`}</section>
     <section class="secao"><h2>Resumo do ano</h2><div class="cartao-box">
@@ -928,6 +944,7 @@ function telaRelatorios() {
     </div>`;
 }
 ligar.relatorios = () => {
+  document.querySelectorAll("[data-abririnv]").forEach((b) => (b.onclick = abrirInvestimentos));
   document.querySelectorAll("[data-cmodo]").forEach((b) => (b.onclick = () => { S.cmp.modo = b.dataset.cmodo; if (S.cmp.modo === "ano") S.cmp.ano = Number(S.cmp.mes.slice(0, 4)); desenhar(); }));
   document.querySelectorAll("[data-cnav]").forEach((b) => (b.onclick = () => {
     const n = Number(b.dataset.cnav);
@@ -1001,6 +1018,9 @@ function atualizarFundo() {
     if (pilha.length && verFaturas.repintar && document.contains($("[data-c]"))) verFaturas.repintar();
     if (abrirBusca.repintar && $("[data-q]")) abrirBusca.repintar();
     if (verCategoria.repintar && $("[data-detcat]")) verCategoria.repintar();
+    if (abrirInvestimentos.repintar && $("[data-invtela]")) abrirInvestimentos.repintar();
+    if (verInvest.repintar && $(".inv-top")) verInvest.repintar();
+    if (gerirContas.repintar && $("[data-contas]")) gerirContas.repintar();
     desenhar();
   }, 0);
 }
@@ -1017,6 +1037,7 @@ function telaPerfil() {
     <section class="secao"><h2>Cadastros</h2><div class="cartao-box">
       ${op("categorias", "tag", "Categorias", `${S.d.categorias.length} categorias`)}
       ${op("contas", "wallet", "Contas", "Onde fica seu dinheiro (banco, carteira…)")}
+      ${op("invest", "piggy-bank", "Investimentos", S.d.invest.length ? `${S.d.invest.length} cadastrado${S.d.invest.length > 1 ? "s" : ""} · ${fmtR(totalInvestido())}` : "Poupança, CDB, Tesouro, metas…")}
       ${op("fixos", "repeat", "Lançamentos recorrentes (fixos)", S.d.fixos.length ? `${S.d.fixos.length} todo mês` : "Aluguel, salário, internet…")}
       ${op("cartoes", "credit-card", "Cartões de crédito", S.d.cartoes.length ? S.d.cartoes.map((c) => c.nome).join(", ") : "Nenhum cadastrado")}
     </div></section>
@@ -1038,7 +1059,7 @@ function telaPerfil() {
     </div>`;
 }
 ligar.perfil = () => {
-  const acoes = { tema: escolherTema, fixos: gerirFixos, categorias: gerirCategorias, contas: gerirContas, cartoes: gerirCartoes, backup: salvarBackup, restaurar: restaurarNoPerfil, csv: exportarCSV, senha: trocarSenha, codigo: gerarCodigo, sair: sairConfirmar };
+  const acoes = { invest: abrirInvestimentos, tema: escolherTema, fixos: gerirFixos, categorias: gerirCategorias, contas: gerirContas, cartoes: gerirCartoes, backup: salvarBackup, restaurar: restaurarNoPerfil, csv: exportarCSV, senha: trocarSenha, codigo: gerarCodigo, sair: sairConfirmar };
   document.querySelectorAll("[data-op]").forEach((b) => (b.onclick = () => acoes[b.dataset.op]()));
   const bi = $("[data-instalar]"); if (bi) bi.onclick = instalarApp;
   $("[data-atualizar]").onclick = procurarAtualizacao;
@@ -1065,6 +1086,11 @@ function abrirEditor(l, opc = {}) {
   if (opc.fixo) E.data = dataFixo(opc.fixo, opc.ym);
   if (E.conta && !S.d.contas.some((c) => c.id === E.conta)) E.conta = S.d.contas[0]?.id;
   if (E.cartao && !S.d.cartoes.some((c) => c.id === E.cartao)) E.cartao = null;
+  // investimentos
+  E.mov = "aplic"; E.inv = S.d.invest[0]?.id || null; E.perda = false;
+  if (fonte && ehInvest(fonte.tipo)) { E.mov = fonte.tipo; E.inv = fonte.inv; E.perda = !!fonte.perda; E.tipo = "invest"; }
+  if (opc.inv) { E.tipo = "invest"; E.mov = opc.inv.mov || "aplic"; if (opc.inv.inv) E.inv = opc.inv.inv; if (!fonte) E.data = hoje(); }
+  if (opc.transf) { E.tipo = "transf"; E.data = hoje(); }
   let todasCats = false;
 
   const titulo = editando ? "Editar" : opc.fixo ? "Confirmar fixo" : opc.modelo ? "Lançar de novo" : "Adicionar";
@@ -1095,15 +1121,16 @@ function abrirEditor(l, opc = {}) {
   function pintarTipos() {
     const t = (v, r) => `<button data-t="${v}" class="${E.tipo === v ? "ativo" : ""}">${r}</button>`;
     const box = $("[data-tipos]", el);
-    if ((editando || opc.fixo) && E.tipo === "transf") box.innerHTML = t("transf", "Transferência");
+    if (E.tipo === "transf" && (editando || opc.transf)) box.innerHTML = t("transf", "Transferência");
+    else if (E.tipo === "invest" && editando) box.innerHTML = t("invest", "Investimento");
     else if (editando || opc.fixo) box.innerHTML = t("despesa", "Despesa") + t("receita", "Receita");
-    else box.innerHTML = t("despesa", "Despesa") + t("receita", "Receita") + t("transf", "Transferência");
+    else box.innerHTML = t("despesa", "Despesa") + t("receita", "Receita") + t("invest", "Investimento");
     box.style.gridTemplateColumns = `repeat(${box.children.length}, 1fr)`;
     box.querySelectorAll("[data-t]").forEach((b) => (b.onclick = () => {
       if (E.tipo === b.dataset.t) return;
       E.tipo = b.dataset.t; E.cat = fonte && fonte.tipo === E.tipo ? fonte.cat : ultimo(E.tipo);
       if (E.tipo !== "despesa") E.cartao = null;
-      if (E.tipo === "transf") E.repetir = 0;
+      if (E.tipo === "transf" || E.tipo === "invest") E.repetir = 0;
       E.parcelas = 1;
       todasCats = false;
       pintarTipos(); pintarCorpo(); pintarChips();
@@ -1112,6 +1139,38 @@ function abrirEditor(l, opc = {}) {
 
   function pintarCorpo() {
     const corpo = $("[data-corpo]", el);
+    if (E.tipo === "invest") {
+      if (!S.d.invest.length) {
+        corpo.innerHTML = `<div class="vazio">${ic("piggy-bank")}Você ainda não cadastrou investimentos.<br><br><button class="btn preto" data-cadinv style="width:auto;margin:0 auto">Cadastrar investimento</button></div>`;
+        $("[data-cadinv]", corpo).onclick = () => editarInvest(null, (n) => { if (n) E.inv = n.id; pintarCorpo(); });
+        return;
+      }
+      if (!S.d.invest.some((i) => i.id === E.inv)) E.inv = S.d.invest[0].id;
+      const dica = { aplic: "Tira da conta e coloca no investimento. Não conta como despesa.", resg: "Tira do investimento e volta para a conta. Não conta como receita.", rend: "Quanto o investimento rendeu (ou perdeu). O dinheiro continua aplicado." }[E.mov];
+      const inv = invest(E.inv);
+      const blocoInv = `<button class="escolha-conta" data-escinv>${bola(inv.icone, corInv(inv))}<span><small>Investimento</small>${esc(inv.nome)} · <span class="num">${fmtR(saldoInv(E.inv))}</span></span></button>`;
+      const blocoConta = `<button class="escolha-conta" data-escconta><span class="bola">${ic("wallet")}</span><span><small>${E.mov === "aplic" ? "Sai da conta" : "Volta para a conta"}</small>${esc(conta(E.conta).nome)} · <span class="num">${fmtR(saldoConta(E.conta))}</span></span></button>`;
+      corpo.innerHTML = `<div class="transf">
+        <div class="mov-sel">${Object.entries(MOVS).map(([k, r]) => `<button data-mv="${k}" class="${E.mov === k ? "sel" : ""}" ${editando && k !== E.mov ? "disabled" : ""}>${r}</button>`).join("")}</div>
+        <p class="mov-dica">${dica}</p>
+        ${E.mov === "aplic" ? blocoConta + `<div class="seta-meio">↓</div>` + blocoInv : E.mov === "resg" ? blocoInv + `<div class="seta-meio">↓</div>` + blocoConta
+          : blocoInv + `<div class="mov-sel dois-op"><button data-pd="0" class="${!E.perda ? "sel" : ""}">Rendeu</button><button data-pd="1" class="${E.perda ? "sel" : ""}">Perdeu</button></div>`}</div>`;
+      corpo.querySelectorAll("[data-mv]").forEach((b) => (b.onclick = () => { E.mov = b.dataset.mv; pintarCorpo(); }));
+      corpo.querySelectorAll("[data-pd]").forEach((b) => (b.onclick = () => { E.perda = b.dataset.pd === "1"; pintarCorpo(); }));
+      $("[data-escinv]", corpo).onclick = async () => {
+        const ops = S.d.invest.map((i) => ({ valor: i.id, rotulo: i.nome, icone: i.icone, sub: `${i.tipo} · ${fmtR(saldoInv(i.id))}` }));
+        ops.push({ valor: "novo", rotulo: "Novo investimento", icone: "plus" });
+        const v = await escolher("Qual investimento?", ops, E.inv);
+        if (v === "novo") return editarInvest(null, (n) => { if (n) E.inv = n.id; pintarCorpo(); });
+        if (v) { E.inv = v; pintarCorpo(); }
+      };
+      const ec = $("[data-escconta]", corpo);
+      if (ec) ec.onclick = async () => {
+        const v = await escolher("Qual conta?", S.d.contas.map((c) => ({ valor: c.id, rotulo: c.nome, icone: "wallet", sub: fmtR(saldoConta(c.id)) })), E.conta);
+        if (v) { E.conta = v; pintarCorpo(); }
+      };
+      return;
+    }
     if (E.tipo === "transf") {
       const bloco = (rot, id, chave) => `<button class="escolha-conta" data-ec="${chave}"><span class="bola">${ic("wallet")}</span><span><small>${rot}</small>${esc(conta(id).nome)}</span></button>`;
       corpo.innerHTML = S.d.contas.length < 2
@@ -1149,7 +1208,7 @@ function abrirEditor(l, opc = {}) {
 
   function pintarChips() {
     const box = $("[data-chips]", el);
-    if (E.tipo === "transf") { box.innerHTML = ""; return; }
+    if (E.tipo === "transf" || E.tipo === "invest") { box.innerHTML = ""; pintarRepetir(); return; }
     const pagoCom = E.cartao ? `<button class="chip cartao" data-pg>${ic("credit-card")}<span>${esc(cartao(E.cartao).nome)}</span></button>`
       : `<button class="chip" data-pg>${ic("wallet")}<span>${esc(conta(E.conta).nome)}</span></button>`;
     const podeParc = (E.cartao || E.tipo === "receita") && !(editando && l.parc) && !opc.fixo && !E.repetir;
@@ -1186,7 +1245,7 @@ function abrirEditor(l, opc = {}) {
   const fixoLigado = () => (editando && l.fixo ? fixoPorId(l.fixo) : null);
   function pintarRepetir() {
     const fx = fixoLigado();
-    const pode = !opc.fixo && E.tipo !== "transf" && E.parcelas === 1 && !(editando && l.parc);
+    const pode = !opc.fixo && E.tipo !== "transf" && E.tipo !== "invest" && E.parcelas === 1 && !(editando && l.parc);
     btRep.hidden = !pode && !fx;
     btRep.classList.toggle("ativo", !!E.repetir || !!fx);
     btRep.innerHTML = `${ic("repeat")}<span>${fx ? "Recorrente" : txtRep(E.repetir)}</span>`;
@@ -1275,6 +1334,25 @@ function abrirEditor(l, opc = {}) {
     const r = calc();
     if (r.temOp) { if (Number.isFinite(r.valor) && r.valor > 0) { E.expr = nf2.format(r.valor / 100).replace(/\./g, ""); pintarVisor(); } return; }
     if (!(r.valor > 0)) return aviso("Digite o valor.");
+    if (E.tipo === "invest") {
+      if (!E.inv || !S.d.invest.some((i) => i.id === E.inv)) return aviso("Escolha ou cadastre um investimento.");
+      if (E.mov === "resg") {
+        const disp = saldoInv(E.inv, "9999-12-31") + (editando && l.tipo === "resg" && l.inv === E.inv ? l.valor : 0);
+        if (r.valor > disp) return aviso(`Esse investimento tem só ${fmtR(disp)}.`);
+      }
+      const mov = { tipo: E.mov, valor: r.valor, nota: (E.nota || "").trim(), data: E.data, inv: E.inv, conta: E.mov === "rend" ? null : E.conta };
+      if (E.mov === "rend" && E.perda) mov.perda = true;
+      if (editando) {
+        const alvo = S.d.lancs.find((x) => x.id === l.id);
+        for (const k of ["cat", "cartao", "destino", "perda", "parc", "fixo"]) delete alvo[k];
+        Object.assign(alvo, mov);
+      } else S.d.lancs.push({ ...mov, id: novoId() });
+      await salvar(); fechar();
+      aviso(editando ? "Alterações salvas." : E.mov === "aplic" ? `Aplicado em ${invest(E.inv).nome}. Não conta como despesa.` : E.mov === "resg" ? `Resgatado para ${conta(E.conta).nome}.` : E.perda ? "Perda registrada." : "Rendimento registrado.");
+      if (!editando && !E.data.startsWith(S.mes)) S.mes = E.data.slice(0, 7);
+      atualizarFundo();
+      return;
+    }
     if (E.tipo === "transf") {
       if (S.d.contas.length < 2) return aviso("Cadastre outra conta em Perfil → Contas.");
       if (E.conta === E.destino) return aviso("Escolha contas diferentes.");
@@ -1347,7 +1425,7 @@ function abrirEditor(l, opc = {}) {
       S.d.lancs = v === "todas" ? S.d.lancs.filter((x) => !(x.parc && x.parc.g === alvo.parc.g)) : S.d.lancs.filter((x) => x.id !== alvo.id);
     } else {
       const txtFixo = alvo.fixo && fixoPorId(alvo.fixo) ? " Ele volta a aparecer como fixo a confirmar neste mês." : "";
-      if (!(await confirmar("Apagar lançamento", `${alvo.nota || cat(alvo.cat).nome} · ${fmtR(alvo.valor)}.${txtFixo}`, "Apagar", true))) return;
+      if (!(await confirmar("Apagar lançamento", `${alvo.nota || (ehInvest(alvo.tipo) ? `${MOVS[alvo.tipo]} · ${invest(alvo.inv).nome}` : alvo.tipo === "transf" ? "Transferência" : cat(alvo.cat).nome)} · ${fmtR(alvo.valor)}.${txtFixo}`, "Apagar", true))) return;
       S.d.lancs = S.d.lancs.filter((x) => x.id !== alvo.id);
     }
     await salvar(); fechar(); aviso("Lançamento apagado."); atualizarFundo();
@@ -1355,6 +1433,184 @@ function abrirEditor(l, opc = {}) {
 
   if (!E.cat && E.tipo !== "transf") E.cat = ultimo(E.tipo);
   pintarTipos(); pintarCorpo(); pintarChips(); pintarVisor(); pintarData();
+}
+
+/* ================= INVESTIMENTOS ================= */
+
+const TIPOS_INV = [
+  ["Poupança", "piggy-bank"], ["CDB / RDB", "landmark"], ["Tesouro Direto", "building"], ["LCI / LCA", "shield"],
+  ["Fundos", "coins"], ["Ações", "chart-line"], ["Fundos imobiliários", "house"], ["Cripto", "gem"],
+  ["Previdência", "umbrella"], ["Conta remunerada", "wallet"], ["Outros", "trending-up"],
+];
+const CORES_INV = ["#111111", "#E0560B", "#1E88E5", "#43A047", "#8E24AA", "#B8860B", "#00897B", "#D81B60", "#546E7A", "#6D4C41", "#3949AB"];
+const MOVS = { aplic: "Aplicar", resg: "Resgatar", rend: "Rendimento" };
+const ehInvest = (t) => t === "aplic" || t === "resg" || t === "rend";
+const invest = (id) => S.d.invest.find((i) => i.id === id) || { nome: "Investimento removido", icone: "trending-up", tipo: "Outros" };
+const corInv = (i) => i.cor || CORES_INV[Math.max(0, S.d.invest.indexOf(i)) % CORES_INV.length];
+
+// Saldo de um investimento até uma data (hoje, se não informar)
+function saldoInv(id, ate = hoje()) {
+  let s = invest(id).saldoInicial || 0;
+  for (const l of S.d.lancs) {
+    if (l.inv !== id || l.data > ate) continue;
+    if (l.tipo === "aplic") s += l.valor;
+    else if (l.tipo === "resg") s -= l.valor;
+    else if (l.tipo === "rend") s += l.perda ? -l.valor : l.valor;
+  }
+  return s;
+}
+const totalInvestido = (ate) => S.d.invest.reduce((t, i) => t + saldoInv(i.id, ate), 0);
+const totalContas = (ate) => S.d.contas.reduce((t, c) => t + saldoConta(c.id, ate), 0);
+const patrimonio = (ate) => totalContas(ate) + totalInvestido(ate);
+function movsPeriodo(pref) {
+  let apl = 0, resg = 0, rend = 0;
+  for (const l of S.d.lancs) {
+    if (!ehInvest(l.tipo) || !l.data.startsWith(pref)) continue;
+    if (l.tipo === "aplic") apl += l.valor; else if (l.tipo === "resg") resg += l.valor; else rend += l.perda ? -l.valor : l.valor;
+  }
+  return { apl, resg, rend };
+}
+const fimDoMes = (ym) => { const [a, m] = ym.split("-").map(Number); const f = `${ym}-${p2(new Date(a, m, 0).getDate())}`; return f > hoje() ? hoje() : f; };
+const sinalR = (v) => (v < 0 ? "- " : "+ ") + fmtR(Math.abs(v));
+
+function rosquinha(fatias, centro1, centro2) {
+  const total = fatias.reduce((t, f) => t + Math.max(0, f.v), 0);
+  if (!total) return "";
+  const R = 70, C = 2 * Math.PI * R; let acum = 0;
+  const segs = fatias.filter((f) => f.v > 0).map((f, i, arr) => {
+    const frac = f.v / total;
+    const s = `<circle r="${R}" cx="100" cy="100" fill="none" stroke="${f.cor}" stroke-width="30" stroke-dasharray="${Math.max(0, frac * C - (arr.length > 1 ? 2 : 0))} ${C}" stroke-dashoffset="${-acum * C}" transform="rotate(-90 100 100)"/>`;
+    acum += frac; return s;
+  }).join("");
+  return `<svg viewBox="0 0 200 200">${segs}<text x="100" y="96" text-anchor="middle" font-size="12" fill="#777">${centro1}</text>
+    <text x="100" y="118" text-anchor="middle" font-size="${centro2.length > 11 ? 15 : 18}" font-weight="700" fill="#111">${centro2}</text></svg>`;
+}
+
+function abrirInvestimentos() {
+  const el = abrirCamada(`<div class="cab det-cab"><button data-x aria-label="Voltar">${ic("arrow-left")}</button><b>Investimentos</b>
+      <button class="det-mes" data-novoinv>${ic("plus")}</button></div><div class="det-corpo" data-invtela></div>`, { tela: true, aoFechar: () => desenhar() });
+  $("[data-x]", el).onclick = () => fechar();
+  $("[data-novoinv]", el).onclick = () => editarInvest(null, pintar);
+  const pintar = () => {
+    const corpo = $("[data-invtela]", el);
+    const btMov = `<div class="inv-acoes"><button data-mov="aplic">${ic("download")}Aplicar</button><button data-mov="resg">${ic("upload")}Resgatar</button><button data-mov="rend">${ic("trending-up")}Rendimento</button></div>`;
+    if (!S.d.invest.length) {
+      corpo.innerHTML = `<div class="inv-intro">${ic("piggy-bank")}<h3>Organize seus investimentos</h3>
+        <p>Cadastre onde seu dinheiro está guardado (poupança, CDB, Tesouro…). Aplicar e resgatar <b>não contam como despesa ou receita</b>: o dinheiro só muda de lugar. Rendimentos aumentam seu patrimônio.</p>
+        <button class="btn preto" data-primeiro>Cadastrar primeiro investimento</button></div>`;
+      $("[data-primeiro]", corpo).onclick = () => editarInvest(null, pintar);
+      return;
+    }
+    const ym = mesAtual(), ano = ym.slice(0, 4);
+    const nasContas = totalContas(), investido = totalInvestido(), pat = nasContas + investido;
+    const mm = movsPeriodo(ym), ma = movsPeriodo(ano);
+    // evolução do patrimônio (12 meses)
+    // começa no mês em que a pessoa começou a usar o app (no máximo 12 meses)
+    const primeiro = [S.u.criadoEm ? S.u.criadoEm.slice(0, 7) : ym, ...S.d.lancs.map((l) => l.data.slice(0, 7))].reduce((a, b) => (b < a ? b : a), ym);
+    const inicio = primeiro < somaMes(ym, -11) ? somaMes(ym, -11) : primeiro;
+    const meses = []; for (let m = inicio; m <= ym; m = somaMes(m, 1)) meses.push(m);
+    const serie = meses.map((m) => ({ m, c: totalContas(fimDoMes(m)), i: totalInvestido(fimDoMes(m)) }));
+    const mx = Math.max(1, ...serie.map((x) => Math.max(0, x.c) + Math.max(0, x.i)));
+    const antes = fimDoMes(somaMes(meses[0], -1));
+    const varia = pat - patrimonio(antes);
+    const barras = serie.map((x) => `<div class="pat-col" title="${nomeMes(x.m)}: ${fmtR(x.c + x.i)}">
+        <span class="pat-bar"><i class="pi" style="height:${(Math.max(0, x.i) / mx) * 100}%"></i><i class="pc" style="height:${(Math.max(0, x.c) / mx) * 100}%"></i></span>
+        <small>${MES3[Number(x.m.slice(5)) - 1].replace(".", "")}</small></div>`).join("");
+    // metas
+    const comMeta = S.d.invest.filter((i) => i.meta > 0);
+    const metas = comMeta.map((i) => {
+      const s = saldoInv(i.id), p = Math.min(100, Math.max(0, (s / i.meta) * 100));
+      return `<button class="meta" data-inv="${i.id}"><div class="meta-l"><b>${esc(i.metaNome || i.nome)}</b><span class="num">${Math.floor(p)}%</span></div>
+        <div class="meta-b"><i style="width:${p}%;background:${corInv(i)}"></i></div>
+        <small>${fmtR(s)} de ${fmtR(i.meta)} · ${s >= i.meta ? "meta alcançada!" : `faltam ${fmtR(i.meta - s)}`}</small></button>`;
+    }).join("");
+    // onde está
+    const lista = S.d.invest.map((i) => ({ i, s: saldoInv(i.id) })).sort((a, b) => b.s - a.s);
+    const fat = lista.map((x) => ({ v: x.s, cor: corInv(x.i) }));
+    const onde = lista.map((x) => `<button class="inv-l" data-inv="${x.i.id}">${bola(x.i.icone, corInv(x.i))}<span class="meio"><b>${esc(x.i.nome)}</b><small>${esc(x.i.tipo)}</small></span>
+        <span class="inv-v"><b class="num">${fmtR(x.s)}</b><small>${investido > 0 ? Math.round((Math.max(0, x.s) / investido) * 100) : 0}%</small></span></button>`).join("");
+    corpo.innerHTML = `
+      <div class="pat-card"><small>Patrimônio total</small><div class="pat-v num">${fmtR(pat)}</div>
+        <div class="pat-div"><div><i class="pc"></i><span>Nas contas</span><b class="num">${fmtR(nasContas)}</b></div><div><i class="pi"></i><span>Investido</span><b class="num">${fmtR(investido)}</b></div></div>
+        <div class="pat-mes"><span>Este mês: aplicou <b class="num">${fmtR(mm.apl)}</b> · resgatou <b class="num">${fmtR(mm.resg)}</b> · rendeu <b class="num">${sinalR(mm.rend)}</b></span>
+        <span>Rendimentos em ${ano}: <b class="num">${sinalR(ma.rend)}</b></span></div></div>
+      ${btMov}
+      <section class="secao"><h2>Evolução do patrimônio</h2><div class="cartao-box" style="padding:14px 10px 10px">
+        <div class="pat-graf">${barras}</div>
+        <div class="mb-leg"><span><i class="pc"></i>Nas contas</span><span><i class="pi"></i>Investido</span></div>
+        <p class="pat-varia">Desde ${nomeMes(meses[0])}: <b class="num">${sinalR(varia)}</b></p></div></section>
+      <section class="secao"><h2>Metas</h2>${comMeta.length ? `<div class="cartao-box">${metas}</div>`
+        : `<div class="cartao-box"><p class="vazio-meta">Defina uma meta num investimento (ex.: Reserva de emergência, R$ 10.000) e acompanhe aqui. Toque num investimento abaixo → Editar.</p></div>`}</section>
+      <section class="secao"><h2>Onde está</h2><div class="cartao-box">${investido > 0 ? `<div class="rosca-area inv-rosca">${rosquinha(fat, "Investido", fmt(investido))}
+        <div class="legenda">${lista.filter((x) => x.s > 0).slice(0, 6).map((x) => `<div><i style="background:${corInv(x.i)}"></i><span>${esc(x.i.nome)}</span><b class="num">${Math.round((x.s / investido) * 100)}%</b></div>`).join("")}</div></div>` : ""}
+        ${onde}<button class="inv-l nova" data-novo2><span class="bola">${ic("plus")}</span><span class="meio"><b>Novo investimento</b></span></button></div></section>`;
+    corpo.querySelectorAll("[data-mov]").forEach((b) => (b.onclick = () => abrirEditor(null, { inv: { mov: b.dataset.mov } })));
+    corpo.querySelectorAll("[data-inv]").forEach((b) => (b.onclick = () => verInvest(b.dataset.inv)));
+    $("[data-novo2]", corpo).onclick = () => editarInvest(null, pintar);
+  };
+  pintar();
+  abrirInvestimentos.repintar = pintar;
+}
+
+function verInvest(id) {
+  const el = abrirCamada(`<div data-c></div>`);
+  const pintar = () => {
+    const i = S.d.invest.find((x) => x.id === id);
+    if (!i) return fechar();
+    const s = saldoInv(id);
+    const movs = S.d.lancs.filter((l) => l.inv === id).sort((a, b) => b.data.localeCompare(a.data) || b.id.localeCompare(a.id));
+    const rendTot = movs.filter((l) => l.tipo === "rend").reduce((t, l) => t + (l.perda ? -l.valor : l.valor), 0);
+    const p = i.meta > 0 ? Math.min(100, Math.max(0, (s / i.meta) * 100)) : 0;
+    $("[data-c]", el).innerHTML = `<div class="inv-top">${bola(i.icone, corInv(i))}<div><h2 style="text-align:left;margin:0">${esc(i.nome)}</h2><small>${esc(i.tipo)}</small></div>
+        <button class="btn contorno" data-ed style="width:auto;padding:8px 14px;margin-left:auto">${ic("pencil")}Editar</button></div>
+      <div class="inv-saldo"><small>Saldo hoje</small><b class="num">${fmtR(s)}</b><span>Rendimentos acumulados: <b class="num">${sinalR(rendTot)}</b></span></div>
+      ${i.meta > 0 ? `<div class="meta" style="padding:0 0 12px"><div class="meta-l"><b>Meta${i.metaNome ? ": " + esc(i.metaNome) : ""}</b><span class="num">${Math.floor(p)}%</span></div>
+        <div class="meta-b"><i style="width:${p}%;background:${corInv(i)}"></i></div><small>${fmtR(s)} de ${fmtR(i.meta)} · ${s >= i.meta ? "meta alcançada!" : `faltam ${fmtR(i.meta - s)}`}</small></div>` : ""}
+      <div class="inv-acoes" style="margin:4px 0 12px"><button data-mov="aplic">${ic("download")}Aplicar</button><button data-mov="resg">${ic("upload")}Resgatar</button><button data-mov="rend">${ic("trending-up")}Rendimento</button></div>
+      <div style="margin:0 -18px">${movs.map((l) => itemLanc(l, true)).join("") || `<p class="vazio" style="padding:20px">Nenhuma movimentação ainda.</p>`}</div>`;
+    $("[data-ed]", el).onclick = () => editarInvest(i, pintar);
+    el.querySelectorAll("[data-mov]").forEach((b) => (b.onclick = () => abrirEditor(null, { inv: { mov: b.dataset.mov, inv: id } })));
+    el.querySelectorAll("[data-lanc]").forEach((b) => (b.onclick = () => abrirLanc(b.dataset.lanc)));
+  };
+  pintar();
+  verInvest.repintar = pintar;
+}
+
+function editarInvest(i, depois) {
+  let tipo = i ? i.tipo : TIPOS_INV[0][0];
+  const el = abrirCamada(`<h2>${i ? "Editar investimento" : "Novo investimento"}</h2><form data-f>
+    <label>Nome<input name="nome" maxlength="28" value="${esc(i ? i.nome : "")}" placeholder="Ex.: Reserva Nubank, Tesouro Selic" required></label>
+    <label style="margin-bottom:6px">Tipo</label>
+    <div class="tipos-inv">${TIPOS_INV.map(([n, ico]) => `<button type="button" data-tp="${esc(n)}" class="${n === tipo ? "sel" : ""}">${ic(ico)}<span>${esc(n)}</span></button>`).join("")}</div>
+    <label style="margin-top:12px">Quanto já tem aplicado hoje (R$)<input name="saldo" inputmode="decimal" value="${i ? nf2.format((i.saldoInicial || 0) / 100) : "0,00"}">
+      <small style="color:#888">Valor que já estava investido antes de começar a usar o app. Não sai das suas contas.</small></label>
+    <div class="dois"><label>Meta (opcional, R$)<input name="meta" inputmode="decimal" value="${i && i.meta ? nf2.format(i.meta / 100) : ""}" placeholder="Ex.: 10.000"></label>
+    <label>Nome da meta<input name="metaNome" maxlength="28" value="${esc(i && i.metaNome ? i.metaNome : "")}" placeholder="Ex.: Reserva de emergência"></label></div>
+    <p class="erro" data-e></p>
+    <div class="botoes"><button class="btn preto">Salvar</button>${i ? `<button type="button" class="btn perigo" data-apagar>Apagar investimento</button>` : ""}</div></form>`);
+  el.querySelectorAll("[data-tp]").forEach((b) => (b.onclick = () => { tipo = b.dataset.tp; el.querySelectorAll("[data-tp]").forEach((x) => x.classList.toggle("sel", x === b)); }));
+  $("[data-f]", el).onsubmit = async (e) => {
+    e.preventDefault();
+    const f = e.target, erro = $("[data-e]", el);
+    const saldo = f.saldo.value.trim() ? lerValor(f.saldo.value) : 0;
+    const meta = f.meta.value.trim() ? lerValor(f.meta.value) : 0;
+    if (!Number.isFinite(saldo) || saldo < 0) return (erro.textContent = "Valor aplicado inválido.");
+    if (!Number.isFinite(meta) || meta < 0) return (erro.textContent = "Meta inválida.");
+    const icone = (TIPOS_INV.find(([n]) => n === tipo) || TIPOS_INV[0])[1];
+    const dados = { nome: f.nome.value.trim(), tipo, icone, saldoInicial: saldo, meta, metaNome: f.metaNome.value.trim() };
+    let alvo = i;
+    if (i) Object.assign(i, dados); else { alvo = { id: novoId(), ...dados }; S.d.invest.push(alvo); }
+    await salvar(); fechar(); aviso("Investimento salvo.");
+    setTimeout(() => { depois && depois(alvo); atualizarFundo(); }, 0);
+  };
+  const ap = $("[data-apagar]", el);
+  if (ap) ap.onclick = async () => {
+    if (S.d.lancs.some((l) => l.inv === i.id)) return aviso("Esse investimento tem movimentações. Apague-as antes.");
+    if (!(await confirmar("Apagar investimento", `Apagar “${i.nome}”?`, "Apagar", true))) return;
+    S.d.invest = S.d.invest.filter((x) => x.id !== i.id);
+    await salvar(); fechar(); aviso("Investimento apagado.");
+    setTimeout(() => { depois && depois(); atualizarFundo(); }, 0);
+  };
 }
 
 /* ================= LANÇAMENTOS FIXOS ================= */
@@ -1429,7 +1685,7 @@ function abrirBusca() {
     const t = sem(q.value.trim());
     if (t.length < 2) { res.innerHTML = `<p class="vazio">${ic("search")}Digite pelo menos 2 letras.</p>`; return; }
     const achados = S.d.lancs.filter((l) => {
-      const txt = [l.nota, l.cat && cat(l.cat).nome, l.cartao && cartao(l.cartao).nome, l.conta && conta(l.conta).nome, fmt(l.valor), l.tipo === "fatura" ? "fatura" : "", l.tipo === "transf" ? "transferencia" : ""].map(sem).join(" ");
+      const txt = [l.nota, l.cat && cat(l.cat).nome, l.cartao && cartao(l.cartao).nome, l.conta && conta(l.conta).nome, fmt(l.valor), l.tipo === "fatura" ? "fatura" : "", l.tipo === "transf" ? "transferencia" : "", l.inv && invest(l.inv).nome, ehInvest(l.tipo) ? "investimento " + MOVS[l.tipo] : ""].map(sem).join(" ");
       return txt.includes(t);
     }).sort((a, b) => b.data.localeCompare(a.data));
     if (!achados.length) { res.innerHTML = `<p class="vazio">${ic("search")}Nada encontrado.</p>`; return; }
@@ -1576,12 +1832,16 @@ function gerirContas() {
   const el = abrirCamada(`<div data-c></div>`, { aoFechar: () => desenhar() });
   const pintar = () => {
     $("[data-c]", el).innerHTML = `<h2>Contas</h2><p style="text-align:center;color:#666;margin:-6px 0 10px;font-size:14px">Onde seu dinheiro fica: banco, carteira, poupança…</p>
-      <div class="lista-escolha">${S.d.contas.map((c) => `<button data-e="${c.id}"><span class="bola">${ic("wallet")}</span><span>${esc(c.nome)}<br><small style="color:#777">Saldo: ${fmtR(saldoConta(c.id))}</small></span><span class="ok">${ic("pencil")}</span></button>`).join("")}
+      ${S.d.contas.length > 1 ? `<button class="btn contorno" data-transf style="margin-bottom:10px">${ic("arrow-left-right")}Transferir entre contas</button>`
+        : `<p class="dica-ordem">${ic("arrow-left-right")} Com duas ou mais contas, aparece aqui a opção de transferir dinheiro entre elas.</p>`}
+      <div class="lista-escolha" data-contas>${S.d.contas.map((c) => `<button data-e="${c.id}"><span class="bola">${ic("wallet")}</span><span>${esc(c.nome)}<br><small style="color:#777">Saldo: ${fmtR(saldoConta(c.id))}</small></span><span class="ok">${ic("pencil")}</span></button>`).join("")}
       <button data-nova><span class="bola">${ic("plus")}</span><b>Nova conta</b></button></div>`;
     el.querySelectorAll("[data-e]").forEach((b) => (b.onclick = () => editarConta(S.d.contas.find((c) => c.id === b.dataset.e), pintar)));
     $("[data-nova]", el).onclick = () => editarConta(null, pintar);
+    const tr = $("[data-transf]", el); if (tr) tr.onclick = () => abrirEditor(null, { transf: true });
   };
   pintar();
+  gerirContas.repintar = pintar;
 }
 
 function editarConta(c, depois) {
@@ -1744,10 +2004,10 @@ function restaurarNoPerfil() {
 
 async function exportarCSV() {
   const linhas = [["Data", "Tipo", "Categoria", "Nota", "Conta/Cartão", "Parcela", "Valor"]];
-  const nomes = { despesa: "Despesa", receita: "Receita", transf: "Transferência", fatura: "Pagamento de fatura" };
+  const nomes = { despesa: "Despesa", receita: "Receita", transf: "Transferência", fatura: "Pagamento de fatura", aplic: "Aplicação", resg: "Resgate", rend: "Rendimento" };
   for (const l of [...S.d.lancs].sort((a, b) => a.data.localeCompare(b.data))) {
-    const onde = l.tipo === "transf" ? `${conta(l.conta).nome} → ${conta(l.destino).nome}` : l.cartao && l.tipo === "despesa" ? `Cartão ${cartao(l.cartao).nome}` : l.tipo === "fatura" ? `${conta(l.conta).nome} (fatura ${cartao(l.cartao).nome})` : conta(l.conta).nome;
-    const v = (l.tipo === "receita" ? 1 : l.tipo === "transf" ? 1 : -1) * l.valor / 100;
+    const onde = ehInvest(l.tipo) ? (l.tipo === "rend" ? invest(l.inv).nome : l.tipo === "aplic" ? `${conta(l.conta).nome} → ${invest(l.inv).nome}` : `${invest(l.inv).nome} → ${conta(l.conta).nome}`) : l.tipo === "transf" ? `${conta(l.conta).nome} → ${conta(l.destino).nome}` : l.cartao && l.tipo === "despesa" ? `Cartão ${cartao(l.cartao).nome}` : l.tipo === "fatura" ? `${conta(l.conta).nome} (fatura ${cartao(l.cartao).nome})` : conta(l.conta).nome;
+    const v = (l.tipo === "receita" || l.tipo === "transf" || l.tipo === "aplic" || l.tipo === "resg" || (l.tipo === "rend" && !l.perda) ? 1 : -1) * l.valor / 100;
     linhas.push([`${l.data.slice(8)}/${l.data.slice(5, 7)}/${l.data.slice(0, 4)}`, nomes[l.tipo], l.cat ? cat(l.cat).nome : "", l.nota || "", onde, l.parc ? `${l.parc.n}/${l.parc.t}` : "", nf2.format(v).replace(/\./g, "")]);
   }
   const csv = "﻿" + linhas.map((r) => r.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(";")).join("\r\n");
