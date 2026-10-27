@@ -1,7 +1,7 @@
 "use strict";
 /* Gestor de Finanças — app instalável, dados guardados só no aparelho e criptografados. */
 
-const VERSAO_APP = "2.5";
+const VERSAO_APP = "2.6";
 const $ = (s, el = document) => el.querySelector(s);
 const esc = (t) => String(t ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const ic = (n) => `<svg class="ic" viewBox="0 0 24 24">${ICONES[n] || ICONES["circle-ellipsis"]}</svg>`;
@@ -317,14 +317,17 @@ function faturaDe(cid, iso) {
 const faturaAberta = (cid) => faturaDe(cid, hoje());
 
 function totaisMes(ym) {
-  let des = 0, rec = 0, cart = 0, pagFat = 0;
+  let des = 0, rec = 0, cart = 0, pagFat = 0, apl = 0, resg = 0;
   for (const l of S.d.lancs) {
     if (!l.data.startsWith(ym)) continue;
     if (l.tipo === "despesa") { des += l.valor; if (l.cartao) cart += l.valor; }
     else if (l.tipo === "receita") rec += l.valor;
     else if (l.tipo === "fatura") pagFat += l.valor;
+    else if (l.tipo === "aplic") apl += l.valor;
+    else if (l.tipo === "resg") resg += l.valor;
   }
-  return { des, rec, cart, pagFat, saldo: rec - (des - cart) - pagFat };
+  // saldo do mês = o que entrou − o que saiu da conta (despesas pagas, faturas e aplicações) + resgates
+  return { des, rec, cart, pagFat, apl, resg, saldo: rec - (des - cart) - pagFat - apl + resg };
 }
 
 // Saldo real da conta: só conta o que já aconteceu (até hoje)
@@ -625,8 +628,10 @@ function telaInicio() {
     for (const [d, ls] of Object.entries(dias)) {
       const desDia = ls.filter((l) => l.tipo === "despesa").reduce((s, l) => s + l.valor, 0);
       const recDia = ls.filter((l) => l.tipo === "receita").reduce((s, l) => s + l.valor, 0);
-      const res = desDia && recDia ? `<span class="dd">− ${fmt(desDia)}</span> <span class="dr">+ ${fmt(recDia)}</span>`
+      const invDia = ls.filter((l) => l.tipo === "aplic").reduce((s, l) => s + l.valor, 0);
+      const res0 = desDia && recDia ? `<span class="dd">− ${fmt(desDia)}</span> <span class="dr">+ ${fmt(recDia)}</span>`
         : desDia ? `Despesas: ${fmt(desDia)}` : recDia ? `Receitas: ${fmt(recDia)}` : "";
+      const res = [res0, invDia ? `Investido: ${fmt(invDia)}` : ""].filter(Boolean).join(" · ");
       corpo += `<div class="dia-cab"><span>${nomeDia(d)}</span><span class="num">${res}</span></div>`;
       corpo += ls.map((l) => itemLanc(l)).join("");
     }
@@ -666,7 +671,7 @@ function itemLanc(l, comData) {
   const partes = comData === true ? [dataCurta(l.data)] : [];
   if (ehInvest(l.tipo)) {
     const i = invest(l.inv);
-    icone = i.icone; cor = corInv(i); sinal = l.tipo === "rend" ? (l.perda ? "- " : "+ ") : "";
+    icone = i.icone; cor = corInv(i); sinal = l.tipo === "rend" ? (l.perda ? "- " : "+ ") : l.tipo === "aplic" ? "- " : "+ ";
     titulo = l.nota || (l.tipo === "aplic" ? `Aplicação · ${i.nome}` : l.tipo === "resg" ? `Resgate · ${i.nome}` : `${l.perda ? "Perda" : "Rendimento"} · ${i.nome}`);
     partes.push(l.tipo === "aplic" ? `${esc(conta(l.conta).nome)} → ${esc(i.nome)}` : l.tipo === "resg" ? `${esc(i.nome)} → ${esc(conta(l.conta).nome)}` : "Investimento");
   } else if (l.tipo === "transf") {
@@ -1564,11 +1569,28 @@ function verInvest(id) {
     $("[data-c]", el).innerHTML = `<div class="inv-top">${bola(i.icone, corInv(i))}<div><h2 style="text-align:left;margin:0">${esc(i.nome)}</h2><small>${esc(i.tipo)}</small></div>
         <button class="btn contorno" data-ed style="width:auto;padding:8px 14px;margin-left:auto">${ic("pencil")}Editar</button></div>
       <div class="inv-saldo"><small>Saldo hoje</small><b class="num">${fmtR(s)}</b><span>Rendimentos acumulados: <b class="num">${sinalR(rendTot)}</b></span></div>
+      ${i.saldoInicial > 0 ? `<div class="inv-aviso"><span><b class="num">${fmtR(i.saldoInicial)}</b> foi cadastrado como "já estava investido", por isso não saiu do saldo da conta nem aparece no histórico.</span>
+        <button class="btn preto" data-converter>Esse valor saiu da minha conta</button></div>` : ""}
       ${i.meta > 0 ? `<div class="meta" style="padding:0 0 12px"><div class="meta-l"><b>Meta${i.metaNome ? ": " + esc(i.metaNome) : ""}</b><span class="num">${Math.floor(p)}%</span></div>
         <div class="meta-b"><i style="width:${p}%;background:${corInv(i)}"></i></div><small>${fmtR(s)} de ${fmtR(i.meta)} · ${s >= i.meta ? "meta alcançada!" : `faltam ${fmtR(i.meta - s)}`}</small></div>` : ""}
       <div class="inv-acoes" style="margin:4px 0 12px"><button data-mov="aplic">${ic("download")}Aplicar</button><button data-mov="resg">${ic("upload")}Resgatar</button><button data-mov="rend">${ic("trending-up")}Rendimento</button></div>
       <div style="margin:0 -18px">${movs.map((l) => itemLanc(l, true)).join("") || `<p class="vazio" style="padding:20px">Nenhuma movimentação ainda.</p>`}</div>`;
     $("[data-ed]", el).onclick = () => editarInvest(i, pintar);
+    const cv = $("[data-converter]", el);
+    if (cv) cv.onclick = () => {
+      const sh = abrirCamada(`<h2>Lançar como aplicação</h2>
+        <p style="text-align:center;color:#555;margin:-6px 0 14px">${fmtR(i.saldoInicial)} vai sair da conta escolhida e aparecer no histórico como aplicação em ${esc(i.nome)}.</p>
+        <form data-f><div class="dois"><label>Saiu da conta<select name="conta">${S.d.contas.map((c) => `<option value="${c.id}">${esc(c.nome)}</option>`).join("")}</select></label>
+        <label>Data<input type="date" name="data" value="${hoje()}" required></label></div>
+        <div class="botoes"><button class="btn preto">Confirmar</button></div></form>`);
+      $("[data-f]", sh).onsubmit = async (e) => {
+        e.preventDefault();
+        S.d.lancs.push({ id: novoId(), tipo: "aplic", valor: i.saldoInicial, nota: "", data: e.target.data.value, inv: i.id, conta: e.target.conta.value });
+        i.saldoInicial = 0;
+        await salvar(); fechar(); aviso("Pronto: saiu da conta e entrou no histórico.");
+        atualizarFundo();
+      };
+    };
     el.querySelectorAll("[data-mov]").forEach((b) => (b.onclick = () => abrirEditor(null, { inv: { mov: b.dataset.mov, inv: id } })));
     el.querySelectorAll("[data-lanc]").forEach((b) => (b.onclick = () => abrirLanc(b.dataset.lanc)));
   };
@@ -1582,8 +1604,14 @@ function editarInvest(i, depois) {
     <label>Nome<input name="nome" maxlength="28" value="${esc(i ? i.nome : "")}" placeholder="Ex.: Reserva Nubank, Tesouro Selic" required></label>
     <label style="margin-bottom:6px">Tipo</label>
     <div class="tipos-inv">${TIPOS_INV.map(([n, ico]) => `<button type="button" data-tp="${esc(n)}" class="${n === tipo ? "sel" : ""}">${ic(ico)}<span>${esc(n)}</span></button>`).join("")}</div>
-    <label style="margin-top:12px">Quanto já tem aplicado hoje (R$)<input name="saldo" inputmode="decimal" value="${i ? nf2.format((i.saldoInicial || 0) / 100) : "0,00"}">
-      <small style="color:#888">Valor que já estava investido antes de começar a usar o app. Não sai das suas contas.</small></label>
+    ${i ? `<label style="margin-top:12px">Já estava aplicado antes do app (R$)<input name="saldo" inputmode="decimal" value="${nf2.format((i.saldoInicial || 0) / 100)}">
+      <small style="color:#888">Valor que já existia antes de usar o app. Não mexe nas suas contas. Aplicações novas, lance pelo botão Aplicar.</small></label>`
+    : `<label style="margin-top:12px">Valor inicial (R$, opcional)<input name="saldo" inputmode="decimal" placeholder="0,00"></label>
+      <div class="origem">
+        <label class="marcar"><input type="radio" name="origem" value="conta" checked> Saiu da conta agora (desconta do saldo)</label>
+        <select name="contaOrigem">${S.d.contas.map((c) => `<option value="${c.id}">${esc(c.nome)}</option>`).join("")}</select>
+        <label class="marcar"><input type="radio" name="origem" value="ja"> Já estava investido antes do app (não mexe nas contas)</label>
+      </div>`}
     <div class="dois"><label>Meta (opcional, R$)<input name="meta" inputmode="decimal" value="${i && i.meta ? nf2.format(i.meta / 100) : ""}" placeholder="Ex.: 10.000"></label>
     <label>Nome da meta<input name="metaNome" maxlength="28" value="${esc(i && i.metaNome ? i.metaNome : "")}" placeholder="Ex.: Reserva de emergência"></label></div>
     <p class="erro" data-e></p>
@@ -1597,9 +1625,11 @@ function editarInvest(i, depois) {
     if (!Number.isFinite(saldo) || saldo < 0) return (erro.textContent = "Valor aplicado inválido.");
     if (!Number.isFinite(meta) || meta < 0) return (erro.textContent = "Meta inválida.");
     const icone = (TIPOS_INV.find(([n]) => n === tipo) || TIPOS_INV[0])[1];
-    const dados = { nome: f.nome.value.trim(), tipo, icone, saldoInicial: saldo, meta, metaNome: f.metaNome.value.trim() };
+    const deConta = !i && f.origem.value === "conta" && saldo > 0;
+    const dados = { nome: f.nome.value.trim(), tipo, icone, saldoInicial: deConta ? 0 : saldo, meta, metaNome: f.metaNome.value.trim() };
     let alvo = i;
     if (i) Object.assign(i, dados); else { alvo = { id: novoId(), ...dados }; S.d.invest.push(alvo); }
+    if (deConta) S.d.lancs.push({ id: novoId(), tipo: "aplic", valor: saldo, nota: "", data: hoje(), inv: alvo.id, conta: f.contaOrigem.value });
     await salvar(); fechar(); aviso("Investimento salvo.");
     setTimeout(() => { depois && depois(alvo); atualizarFundo(); }, 0);
   };
