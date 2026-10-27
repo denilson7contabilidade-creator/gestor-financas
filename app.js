@@ -1,7 +1,7 @@
 "use strict";
 /* Gestor de Finanças — app instalável, dados guardados só no aparelho e criptografados. */
 
-const VERSAO_APP = "2.1";
+const VERSAO_APP = "2.2";
 const $ = (s, el = document) => el.querySelector(s);
 const esc = (t) => String(t ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const ic = (n) => `<svg class="ic" viewBox="0 0 24 24">${ICONES[n] || ICONES["circle-ellipsis"]}</svg>`;
@@ -1077,7 +1077,7 @@ function abrirEditor(l, opc = {}) {
     <div class="add-corpo" data-corpo></div>
     <div class="teclado-area">
       <div class="visor"><div class="chips" data-chips></div><div class="valor"><div class="num" data-vis>0</div><small data-res></small></div></div>
-      <div class="nota"><span>Nota:</span><input data-nota maxlength="80" placeholder="Insira uma nota…"><button class="bt-repetir" data-repetirmes hidden></button></div>
+      <div class="nota"><span>Nota:</span><input data-nota maxlength="80" placeholder="Insira uma nota…" enterkeyhint="done"><button class="bt-repetir" data-repetirmes hidden></button></div>
       <div class="teclado">
         <button data-k="7">7</button><button data-k="8">8</button><button data-k="9">9</button><button class="data" data-data>${ic("calendar")}<span data-datatxt></span></button>
         <button data-k="4">4</button><button data-k="5">5</button><button data-k="6">6</button><button data-k="+">+</button>
@@ -1089,6 +1089,8 @@ function abrirEditor(l, opc = {}) {
   const nota = $("[data-nota]", el);
   nota.value = E.nota || "";
   nota.oninput = () => (E.nota = nota.value);
+  // ✓ / Enter do teclado do celular: fecha o teclado para voltar ao valor e finalizar
+  nota.onkeydown = (e) => { if (e.key === "Enter") { e.preventDefault(); nota.blur(); } };
 
   function pintarTipos() {
     const t = (v, r) => `<button data-t="${v}" class="${E.tipo === v ? "ativo" : ""}">${r}</button>`;
@@ -1102,6 +1104,7 @@ function abrirEditor(l, opc = {}) {
       E.tipo = b.dataset.t; E.cat = fonte && fonte.tipo === E.tipo ? fonte.cat : ultimo(E.tipo);
       if (E.tipo !== "despesa") E.cartao = null;
       if (E.tipo === "transf") E.repetir = 0;
+      E.parcelas = 1;
       todasCats = false;
       pintarTipos(); pintarCorpo(); pintarChips();
     }));
@@ -1149,7 +1152,8 @@ function abrirEditor(l, opc = {}) {
     if (E.tipo === "transf") { box.innerHTML = ""; return; }
     const pagoCom = E.cartao ? `<button class="chip cartao" data-pg>${ic("credit-card")}<span>${esc(cartao(E.cartao).nome)}</span></button>`
       : `<button class="chip" data-pg>${ic("wallet")}<span>${esc(conta(E.conta).nome)}</span></button>`;
-    const parc = E.cartao && !(editando && l.parc) && !opc.fixo && !E.repetir ? `<button class="chip" data-parc>${E.parcelas}x</button>` : "";
+    const podeParc = (E.cartao || E.tipo === "receita") && !(editando && l.parc) && !opc.fixo && !E.repetir;
+    const parc = podeParc ? `<button class="chip" data-parc>${E.parcelas}x</button>` : "";
     box.innerHTML = pagoCom + parc;
     pintarRepetir();
     $("[data-pg]", box).onclick = async () => {
@@ -1168,28 +1172,34 @@ function abrirEditor(l, opc = {}) {
     const pc = $("[data-parc]", box);
     if (pc) pc.onclick = async () => {
       const total = calc().valor;
-      const ops = Array.from({ length: 24 }, (_, i) => ({ valor: i + 1, rotulo: i ? `${i + 1}x` : "À vista (1x)", sub: total > 0 && i ? `${i + 1}x de ${fmtR(Math.floor(total / (i + 1)))}` : "" }));
-      const v = await escolher("Parcelas", ops, E.parcelas);
+      const rec = E.tipo === "receita";
+      const ops = Array.from({ length: 24 }, (_, i) => ({ valor: i + 1, rotulo: i ? `${i + 1}x` : rec ? "De uma vez (1x)" : "À vista (1x)",
+        sub: total > 0 && i ? `${i + 1}x de ${fmtR(Math.floor(total / (i + 1)))}${rec ? " · uma por mês" : ""}` : "" }));
+      const v = await escolher(rec ? "Vou receber em quantas vezes?" : "Parcelas", ops, E.parcelas);
       if (v) { E.parcelas = v; pintarChips(); }
     };
   }
 
-  // Repetir todo mês (lançamento recorrente)
+  // Recorrente (repete todo mês)
   const btRep = $("[data-repetirmes]", el);
-  const txtRep = (n) => (n === -1 ? "Todo mês" : n > 0 ? `${n}x` : "Repetir");
+  const txtRep = (n) => (n === -1 ? "Todo mês" : n > 0 ? `${n}x` : "Recorrente");
+  const fixoLigado = () => (editando && l.fixo ? fixoPorId(l.fixo) : null);
   function pintarRepetir() {
-    const pode = !editando && !opc.fixo && E.tipo !== "transf" && E.parcelas === 1;
-    btRep.hidden = !pode;
-    btRep.classList.toggle("ativo", !!E.repetir);
-    btRep.innerHTML = `${ic("repeat")}<span>${txtRep(E.repetir)}</span>`;
+    const fx = fixoLigado();
+    const pode = !opc.fixo && E.tipo !== "transf" && E.parcelas === 1 && !(editando && l.parc);
+    btRep.hidden = !pode && !fx;
+    btRep.classList.toggle("ativo", !!E.repetir || !!fx);
+    btRep.innerHTML = `${ic("repeat")}<span>${fx ? "Recorrente" : txtRep(E.repetir)}</span>`;
   }
   btRep.onclick = () => {
+    const fx = fixoLigado();
+    if (fx) return editarFixo(fx, () => { pintarRepetir(); });
     const dia = Number(E.data.slice(8)), mesIni = E.data.slice(0, 7);
     const qtdIni = E.repetir > 0 ? E.repetir : 12;
-    const sh = abrirCamada(`<h2>Repetir todo mês</h2>
+    const sh = abrirCamada(`<h2>Recorrente</h2>
       <p style="text-align:center;color:#666;margin:-6px 0 14px;font-size:14px">Nos próximos meses ele aparece em “Fixos a confirmar”, no Início, todo dia ${dia}.</p>
       <div class="lista-escolha">
-        <button data-rop="0" class="${!E.repetir ? "sel" : ""}"><span class="bola">${ic("x")}</span><span>Não repetir</span>${!E.repetir ? `<span class="ok">${ic("check")}</span>` : ""}</button>
+        <button data-rop="0" class="${!E.repetir ? "sel" : ""}"><span class="bola">${ic("x")}</span><span>Não é recorrente</span>${!E.repetir ? `<span class="ok">${ic("check")}</span>` : ""}</button>
         <button data-rop="-1" class="${E.repetir === -1 ? "sel" : ""}"><span class="bola">${ic("repeat")}</span><span>Sem prazo<br><small style="color:#777">Aluguel, salário, internet… até você parar</small></span>${E.repetir === -1 ? `<span class="ok">${ic("check")}</span>` : ""}</button>
       </div>
       <div class="rep-qtd ${E.repetir > 0 ? "sel" : ""}">
@@ -1201,7 +1211,7 @@ function abrirEditor(l, opc = {}) {
           <span>meses</span>
         </div>
         <small data-ate></small>
-        <button class="btn preto" data-usar style="margin-top:12px">Repetir por <span data-n>${qtdIni}</span> meses</button>
+        <button class="btn preto" data-usar style="margin-top:12px">Recorrente por <span data-n>${qtdIni}</span> meses</button>
       </div>`);
     const inp = $("[data-qtd]", sh);
     const val = () => Math.max(2, Math.min(120, Math.round(Number(inp.value) || 2)));
@@ -1215,7 +1225,7 @@ function abrirEditor(l, opc = {}) {
     $("[data-menos]", sh).onclick = () => { inp.value = val() - 1; inp.value = val(); atualizar(); };
     $("[data-mais]", sh).onclick = () => { inp.value = val() + 1; inp.value = val(); atualizar(); };
     atualizar();
-    const usar = (n) => { E.repetir = n; pintarChips(); fechar(); if (n) aviso(n === -1 ? "Vai repetir todo mês, sem prazo." : `Vai repetir por ${n} meses.`); };
+    const usar = (n) => { E.repetir = n; pintarChips(); fechar(); if (n) aviso(n === -1 ? "Recorrente todo mês, sem prazo." : `Recorrente por ${n} meses.`); };
     sh.querySelectorAll("[data-rop]").forEach((b) => (b.onclick = () => usar(Number(b.dataset.rop))));
     $("[data-usar]", sh).onclick = () => usar(val());
   };
@@ -1275,21 +1285,28 @@ function abrirEditor(l, opc = {}) {
     else Object.assign(base, { cat: E.cat, conta: E.cartao ? null : E.conta, cartao: E.cartao || null });
 
     let msg = "Lançamento adicionado.";
-    if (editando && E.cartao && E.parcelas > 1 && !l.parc) {
-      // lançamento existente passou a ser parcelado no cartão: vira N parcelas
+    const parcelado = (E.cartao || E.tipo === "receita") && E.parcelas > 1;
+    if (editando && parcelado && !l.parc) {
+      // lançamento existente passou a ser parcelado: vira N parcelas
       const n = E.parcelas, cada = Math.floor(r.valor / n), sobra = r.valor - cada * n, g = novoId();
       S.d.lancs = S.d.lancs.filter((x) => x.id !== l.id);
       for (let i = 0; i < n; i++) S.d.lancs.push({ ...base, id: novoId() + i, valor: cada + (i === 0 ? sobra : 0), data: somaMesData(E.data, i), parc: { n: i + 1, t: n, g } });
-      msg = `Alterado para o cartão em ${n}x de ${fmtR(cada)}.`;
+      msg = E.tipo === "receita" ? `Alterado para receber em ${n}x de ${fmtR(cada)}.` : `Alterado para o cartão em ${n}x de ${fmtR(cada)}.`;
     } else if (editando) {
       const alvo = S.d.lancs.find((x) => x.id === l.id);
       Object.assign(alvo, base);
-      if (!alvo.cartao) delete alvo.parc;
+      if (!alvo.cartao && alvo.tipo !== "receita") delete alvo.parc;
       msg = "Alterações salvas.";
-    } else if (E.cartao && E.parcelas > 1) {
+      if (E.repetir && !fixoLigado() && !alvo.parc && alvo.tipo !== "transf") {
+        const f = { id: novoId(), tipo: alvo.tipo, cat: alvo.cat, valor: alvo.valor, nota: alvo.nota, conta: alvo.conta, cartao: alvo.cartao, dia: Number(alvo.data.slice(8)), inicio: alvo.data.slice(0, 7) };
+        if (E.repetir > 0) f.fim = somaMes(f.inicio, E.repetir);
+        S.d.fixos.push(f); alvo.fixo = f.id;
+        msg = `Agora é recorrente: aparece todo dia ${f.dia} para confirmar${f.fim ? `, até ${nomeMes(somaMes(f.fim, -1))}` : ""}.`;
+      }
+    } else if (parcelado) {
       const n = E.parcelas, cada = Math.floor(r.valor / n), sobra = r.valor - cada * n, g = novoId();
       for (let i = 0; i < n; i++) S.d.lancs.push({ ...base, id: novoId() + i, valor: cada + (i === 0 ? sobra : 0), data: somaMesData(E.data, i), parc: { n: i + 1, t: n, g } });
-      msg = `Lançado no cartão em ${n}x. Não saiu do saldo.`;
+      msg = E.tipo === "receita" ? `Receita lançada em ${n}x de ${fmtR(cada)}, uma por mês.` : `Lançado no cartão em ${n}x. Não saiu do saldo.`;
     } else {
       const novo = { ...base, id: novoId() };
       if (opc.fixo) { novo.fixo = opc.fixo.id; msg = "Fixo confirmado."; }
@@ -1365,7 +1382,7 @@ function gerirFixos() {
   const el = abrirCamada(`<div data-c></div>`, { aoFechar: () => desenhar() });
   const pintar = () => {
     $("[data-c]", el).innerHTML = `<h2>Lançamentos recorrentes</h2>
-      <p style="text-align:center;color:#666;margin:-6px 0 10px;font-size:14px">Aparecem todo mês no Início para você confirmar com um toque. Para criar, toque em <b>↻ Repetir</b> ao adicionar um lançamento.</p>
+      <p style="text-align:center;color:#666;margin:-6px 0 10px;font-size:14px">Aparecem todo mês no Início para você confirmar com um toque. Para criar, toque em <b>↻ Recorrente</b> ao adicionar ou editar um lançamento.</p>
       <div class="lista-escolha">${S.d.fixos.length ? S.d.fixos.map((f) => `<button data-e="${f.id}">${bola(cat(f.cat).icone, cat(f.cat).cor)}
         <span>${esc(f.nota || cat(f.cat).nome)}<br><small style="color:#777">${f.tipo === "receita" ? "Receita" : "Despesa"} · todo dia ${f.dia}${f.fim ? ` até ${nomeMes(somaMes(f.fim, -1))}` : ""} · ${fmtR(f.valor)}${f.cartao ? " · " + esc(cartao(f.cartao).nome) : ""}</small></span><span class="ok">${ic("pencil")}</span></button>`).join("")
         : `<p class="vazio" style="padding:24px">Nenhum lançamento fixo ainda.</p>`}</div>`;
