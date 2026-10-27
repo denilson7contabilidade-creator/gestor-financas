@@ -1,7 +1,7 @@
 "use strict";
 /* Gestor de Finanças — app instalável, dados guardados só no aparelho e criptografados. */
 
-const VERSAO_APP = "2.3";
+const VERSAO_APP = "2.4";
 const $ = (s, el = document) => el.querySelector(s);
 const esc = (t) => String(t ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const ic = (n) => `<svg class="ic" viewBox="0 0 24 24">${ICONES[n] || ICONES["circle-ellipsis"]}</svg>`;
@@ -625,7 +625,8 @@ function telaInicio() {
     for (const [d, ls] of Object.entries(dias)) {
       const desDia = ls.filter((l) => l.tipo === "despesa").reduce((s, l) => s + l.valor, 0);
       const recDia = ls.filter((l) => l.tipo === "receita").reduce((s, l) => s + l.valor, 0);
-      const res = [desDia ? `Despesas: ${fmt(desDia)}` : "", recDia ? `Receitas: ${fmt(recDia)}` : ""].filter(Boolean).join(" · ");
+      const res = desDia && recDia ? `<span class="dd">− ${fmt(desDia)}</span> <span class="dr">+ ${fmt(recDia)}</span>`
+        : desDia ? `Despesas: ${fmt(desDia)}` : recDia ? `Receitas: ${fmt(recDia)}` : "";
       corpo += `<div class="dia-cab"><span>${nomeDia(d)}</span><span class="num">${res}</span></div>`;
       corpo += ls.map((l) => itemLanc(l)).join("");
     }
@@ -640,9 +641,9 @@ function telaInicio() {
         <div class="col"><span>Saldo</span><b class="num">${fmt(t.saldo)}</b></div>
       </div>
       <div class="faixa">
-        <button class="faixa-it" data-aba="relatorios">${ic("wallet")}<span>Nas contas hoje</span><b class="num">${fmtR(saldoReal)}</b></button>
-        ${S.d.invest.length ? `<button class="faixa-it" data-abririnv>${ic("piggy-bank")}<span>Investido</span><b class="num">${fmtR(totalInvestido())}</b></button>` : ""}
-        ${t.cart ? `<div class="faixa-it">${ic("credit-card")}<span>No cartão no mês</span><b class="num">${fmtR(t.cart)}</b></div>` : ""}
+        <button class="faixa-it" data-aba="relatorios"><span>${ic("wallet")}Nas contas</span><b class="num">${fmtR(saldoReal)}</b></button>
+        ${S.d.invest.length ? `<button class="faixa-it" data-abririnv><span>${ic("piggy-bank")}Investido</span><b class="num">${fmtR(totalInvestido())}</b></button>` : ""}
+        ${t.cart ? `<div class="faixa-it"><span>${ic("credit-card")}No cartão</span><b class="num">${fmtR(t.cart)}</b></div>` : ""}
       </div>
     </header>${faixaInstalar("Instale o app na tela inicial.")}
     <div class="conteudo" id="lista">${corpo}</div>`;

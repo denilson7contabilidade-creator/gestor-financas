@@ -501,3 +501,15 @@ i.pi { background: var(--laranja-graf); }
 .tipos-inv button svg.ic { width: 20px; height: 20px; }
 .tipos-inv button.sel { background: var(--preto); color: #fff; }
 .btn.contorno svg.ic { width: 18px; height: 18px; }
+
+/* ----- v2.4: cartões do topo sem cortar valores ----- */
+.faixa { display: grid; grid-template-columns: repeat(auto-fit, minmax(0, 1fr)); gap: 8px; }
+.faixa-it { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; padding: 8px 10px; min-width: 0; }
+.faixa-it > span { display: flex; align-items: center; gap: 5px; font-size: 12px; color: var(--cinza); white-space: nowrap; }
+.faixa-it > span svg.ic { width: 15px; height: 15px; grid-row: auto; }
+.faixa-it b { font-size: clamp(12.5px, 3.6vw, 15.5px); white-space: nowrap; overflow: visible; text-overflow: clip; letter-spacing: -.2px; }
+.dia-cab { gap: 10px; }
+.dia-cab > span:first-child { white-space: nowrap; }
+.dia-cab > span:last-child { white-space: nowrap; text-align: right; }
+.dia-cab .dd, .dia-cab .dr { font-weight: 600; }
+.dia-cab .dr { margin-left: 6px; }
