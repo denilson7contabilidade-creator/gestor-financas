@@ -1,7 +1,7 @@
 "use strict";
 /* Gestor de Finanças — app instalável, dados guardados só no aparelho e criptografados. */
 
-const VERSAO_APP = "2.8";
+const VERSAO_APP = "2.9";
 const $ = (s, el = document) => el.querySelector(s);
 const esc = (t) => String(t ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const ic = (n) => `<svg class="ic" viewBox="0 0 24 24">${ICONES[n] || ICONES["circle-ellipsis"]}</svg>`;
@@ -584,6 +584,7 @@ function telaCodigo(codigo, novaConta) {
 
 function desenhar() {
   if (!S.u) return telaLogin();
+  agendarAvisosBackup();
   const telas = { inicio: telaInicio, graficos: telaGraficos, relatorios: telaRelatorios, perfil: telaPerfil };
   $("#app").innerHTML = telas[S.aba]() + nav();
   $("#app").querySelectorAll("[data-aba]").forEach((b) => (b.onclick = () => { S.aba = b.dataset.aba; marcarAtividade(); desenhar(); scrollTo(0, 0); }));
@@ -656,14 +657,84 @@ function telaInicio() {
     <div class="conteudo" id="lista">${corpo}</div>`;
 }
 
-// Lembrete de backup: aparece uma vez por mês, até ser feito ou adiado
+// Lembrete de backup: depois de X dias sem backup (padrão 20), aparece toda vez que abrir
+// e manda notificação às 9h, 13h e 19h até ser feito, adiado para amanhã ou desligado.
+const prazoBackup = (u) => (u.backupDias == null ? 20 : u.backupDias);
+function diasSemBackup(u) {
+  const base = u.ultimoBackup || u.criadoEm;
+  return base ? Math.floor((dataLocal(hoje()) - dataLocal(String(base).slice(0, 10))) / 864e5) : 0;
+}
+const dataLocal = (iso) => { const [a, m, d] = iso.split("-").map(Number); return new Date(a, m - 1, d); };
+// adiado para amanhã: guarda a data de hoje (antigo: data e hora); vale até o fim do dia
+const adiadoHoje = (u, iso = hoje()) => !!u.adiouBackup && String(u.adiouBackup).slice(0, 10) >= iso;
+function backupAtrasado(u = S.u) {
+  if (!u || !S.d || !S.d.lancs.length || !prazoBackup(u) || adiadoHoje(u)) return false;
+  return diasSemBackup(u) >= prazoBackup(u);
+}
 function lembreteBackup() {
-  const u = S.u, agora = Date.now(), MES_MS = 30 * 864e5;
-  const ref = Math.max(...[u.ultimoBackup, u.criadoEm, u.adiouBackup].filter(Boolean).map((x) => new Date(x).getTime()));
-  if (!S.d.lancs.length || agora - ref < MES_MS) return "";
-  const txt = u.ultimoBackup ? `Seu último backup foi há ${Math.floor((agora - new Date(u.ultimoBackup)) / 864e5)} dias.` : "Você ainda não fez nenhum backup.";
-  return `<div class="lembrete">${ic("download")}<div><b>Hora do backup do mês</b><small>${txt} Ele protege seus lançamentos se trocar ou perder o celular.</small>
-    <div class="lembrete-bt"><button data-bk-fazer>Fazer backup</button><button data-bk-adiar>Agora não</button></div></div></div>`;
+  const u = S.u;
+  if (!backupAtrasado(u)) return "";
+  return `<div class="lembrete alerta">${ic("download")}<div><b>${u.ultimoBackup ? `Faz ${diasSemBackup(u)} dias sem backup` : "Você ainda não fez backup"}</b><small>O backup protege seus lançamentos se você limpar o Chrome, trocar ou perder o celular.</small>
+    <div class="lembrete-bt"><button data-bk-fazer>Fazer backup</button><button data-bk-adiar>Lembrar amanhã</button><button data-bk-nunca>Não perguntar mais</button></div></div></div>`;
+}
+function textoLembreteBackup(u) { const p = prazoBackup(u); return p ? `Avisa depois de ${p} dias sem backup` : "Desligado"; }
+function configurarLembreteBackup() {
+  const u = S.u, st = !("Notification" in window) ? "sem" : Notification.permission;
+  const el = abrirCamada(`<h2>Lembrete de backup</h2>
+    <p style="text-align:center;color:#555;margin:-6px 0 14px;font-size:14px">Depois desse prazo sem backup, o app avisa toda vez que você abrir e manda notificação às 9h, 13h e 19h até você fazer.</p>
+    <div class="mov-sel quatro">${[[7, "7 dias"], [20, "20 dias"], [30, "30 dias"], [0, "Desligado"]].map(([k, v]) => `<button data-dias="${k}" class="${prazoBackup(u) === k ? "sel" : ""}">${v}</button>`).join("")}</div>
+    <div class="linha-notif">${ic("bell")}<span>${st === "granted" ? "Notificações no celular: <b>ativadas</b>" : st === "denied" ? "Notificações bloqueadas. Libere em Configurações do celular → Notificações → Chrome." : st === "sem" ? "Este navegador não mostra notificações." : "Notificações no celular: desativadas"}</span>${st === "default" ? `<button class="btn preto" data-permitir>Permitir</button>` : ""}</div>
+    <div class="botoes" style="margin-top:14px"><button class="btn preto" data-ok>Pronto</button></div>`, { aoFechar: () => desenhar() });
+  el.querySelectorAll("[data-dias]").forEach((b) => (b.onclick = () => {
+    u.backupDias = Number(b.dataset.dias); u.adiouBackup = null; gravarUsuario(u);
+    el.querySelectorAll("[data-dias]").forEach((x) => x.classList.toggle("sel", x === b));
+    aviso(u.backupDias ? `Aviso depois de ${u.backupDias} dias sem backup` : "Lembrete de backup desligado");
+  }));
+  const p = $("[data-permitir]", el);
+  if (p) p.onclick = async () => { const r = await Notification.requestPermission(); fechar(); if (r === "granted") { aviso("Pronto! Você vai receber os avisos."); registrarAvisoPeriodico(); } };
+  $("[data-ok]", el).onclick = () => fechar();
+}
+
+/* ---------- notificações do lembrete de backup ---------- */
+let timersBackup = [];
+async function lerMostrados() { try { const c = await caches.open("gf-agenda"); const r = await c.match("mostrados.json"); return r ? await r.json() : []; } catch { return []; } }
+async function avisarBackup(a) {
+  if (!("Notification" in window) || Notification.permission !== "granted") return;
+  if ((await lerMostrados()).includes(a.id)) return;
+  try {
+    const reg = await navigator.serviceWorker.getRegistration();
+    if (reg) await reg.showNotification(a.titulo, { body: a.corpo, tag: "gf-backup", icon: "icons/icon-192.png", data: { url: "./" } });
+    const c = await caches.open("gf-agenda"); const l = await lerMostrados(); l.push(a.id);
+    await c.put("mostrados.json", new Response(JSON.stringify(l.slice(-200))));
+  } catch {}
+}
+// guarda os horários dos avisos (sem nenhum dado financeiro) e agenda os do dia
+async function agendarAvisosBackup() {
+  timersBackup.forEach(clearTimeout); timersBackup = [];
+  const lista = [];
+  const u = S.u;
+  if (u && S.d && S.d.lancs.length && prazoBackup(u) && "Notification" in window && Notification.permission === "granted") {
+    const agora = Date.now();
+    for (let i = 0; i < 2; i++) {
+      const dia = isoMais(hoje(), i), dias = diasSemBackup(u) + i;
+      if (dias < prazoBackup(u) || adiadoHoje(u, dia)) continue;
+      for (const h of ["09:00", "13:00", "19:00"]) {
+        const at = new Date(`${dia}T${h}:00`).getTime();
+        if (at > agora - 60000) lista.push({ id: `bk-${u.id}-${dia}-${h}`, at, titulo: `Faz ${dias} dias sem backup`, corpo: "Abra o Gestor de Finanças e toque em Fazer backup. Leva 5 segundos." });
+      }
+    }
+  }
+  try { const c = await caches.open("gf-agenda"); await c.put("agenda.json", new Response(JSON.stringify({ avisos: lista }), { headers: { "content-type": "application/json" } })); } catch {}
+  for (const a of lista) timersBackup.push(setTimeout(() => avisarBackup(a), Math.max(0, a.at - Date.now())));
+}
+const isoMais = (iso, n) => { const d = dataLocal(iso); d.setDate(d.getDate() + n); return `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())}`; };
+async function registrarAvisoPeriodico() {
+  try {
+    const reg = await navigator.serviceWorker.ready;
+    if (!("periodicSync" in reg)) return;
+    const p = await navigator.permissions.query({ name: "periodic-background-sync" });
+    if (p.state === "granted") await reg.periodicSync.register("gf-lembretes", { minInterval: 60 * 60 * 1000 });
+  } catch {}
 }
 
 /* ================= FAMÍLIA DE APPS ================= */
@@ -735,7 +806,8 @@ ligar.inicio = () => {
     const b = e.target.closest("[data-lanc]"); if (b) abrirLanc(b.dataset.lanc);
   };
   const bkF = $("[data-bk-fazer]"); if (bkF) bkF.onclick = salvarBackup;
-  const bkA = $("[data-bk-adiar]"); if (bkA) bkA.onclick = () => { S.u.adiouBackup = new Date().toISOString(); gravarUsuario(S.u); desenhar(); };
+  const bkA = $("[data-bk-adiar]"); if (bkA) bkA.onclick = () => { S.u.adiouBackup = hoje(); gravarUsuario(S.u); desenhar(); aviso("Lembro de novo amanhã."); };
+  const bkN = $("[data-bk-nunca]"); if (bkN) bkN.onclick = () => { S.u.backupDias = 0; gravarUsuario(S.u); desenhar(); aviso("Não vou mais lembrar. Dá para religar em Perfil → Lembrete de backup."); };
   const bi = $("[data-instalar]"); if (bi) bi.onclick = instalarApp;
 };
 
@@ -1080,6 +1152,7 @@ function telaPerfil() {
     </div></section>
     <section class="secao"><h2>Seus dados</h2><div class="cartao-box">
       ${op("backup", "download", "Salvar backup", txtBk)}
+      ${op("lembrete", "calendar-clock", "Lembrete de backup", textoLembreteBackup(u))}
       ${op("restaurar", "upload", "Restaurar backup", "Trazer dados de outro celular")}
       ${op("csv", "file-spreadsheet", "Exportar planilha", "Arquivo para abrir no Excel")}
     </div></section>
@@ -1097,7 +1170,7 @@ function telaPerfil() {
     </div>`;
 }
 ligar.perfil = () => {
-  const acoes = { invest: abrirInvestimentos, tema: escolherTema, fixos: gerirFixos, categorias: gerirCategorias, contas: gerirContas, cartoes: gerirCartoes, backup: salvarBackup, restaurar: restaurarNoPerfil, csv: exportarCSV, senha: trocarSenha, codigo: gerarCodigo, sair: sairConfirmar };
+  const acoes = { invest: abrirInvestimentos, tema: escolherTema, fixos: gerirFixos, categorias: gerirCategorias, contas: gerirContas, cartoes: gerirCartoes, backup: salvarBackup, lembrete: configurarLembreteBackup, restaurar: restaurarNoPerfil, csv: exportarCSV, senha: trocarSenha, codigo: gerarCodigo, sair: sairConfirmar };
   document.querySelectorAll("[data-op]").forEach((b) => (b.onclick = () => acoes[b.dataset.op]()));
   const bi = $("[data-instalar]"); if (bi) bi.onclick = instalarApp;
   $("[data-atualizar]").onclick = procurarAtualizacao;
@@ -2055,7 +2128,7 @@ async function salvarBackup() {
   const nome = `backup-gestor-financas-${S.u.login}-${hoje()}.json`;
   const ok = await entregarArquivo(nome, JSON.stringify(bk), "application/json");
   if (ok) {
-    S.u.ultimoBackup = new Date().toISOString(); gravarUsuario(S.u);
+    S.u.ultimoBackup = new Date().toISOString(); S.u.adiouBackup = null; gravarUsuario(S.u);
     aviso("Backup gerado. Guarde no Drive, e-mail ou WhatsApp.");
     desenhar();
   }

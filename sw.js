@@ -1,7 +1,7 @@
 // Guarda os arquivos do app no celular para funcionar sem internet.
 // Com internet, sempre busca a versão mais nova; sem internet (ou com rede lenta),
 // usa a cópia guardada.
-const VERSAO = "gf-v19";
+const VERSAO = "gf-v20";
 const ARQUIVOS = [
   "./",
   "index.html",
@@ -28,7 +28,7 @@ self.addEventListener("activate", (e) => {
   e.waitUntil(
     caches.keys()
       // só apaga caches deste app ("gf-"): o Gestor de Metas fica no mesmo endereço
-      .then((ks) => Promise.all(ks.filter((k) => k.startsWith("gf-") && k !== VERSAO).map((k) => caches.delete(k))))
+      .then((ks) => Promise.all(ks.filter((k) => k.startsWith("gf-") && k !== VERSAO && k !== "gf-agenda").map((k) => caches.delete(k))))
       .then(() => self.clients.claim())
   );
 });
@@ -52,4 +52,31 @@ self.addEventListener("fetch", (e) => {
       return (await daRede) || (await cache.match("index.html")) || Response.error();
     })
   );
+});
+
+/* ---------- lembrete de backup ---------- */
+// O app guarda só os horários dos avisos (nenhum dado financeiro). Quando o Chrome
+// acorda o app em segundo plano, mostra os que já passaram da hora.
+async function lerJSON(c, nome, padrao) { try { const r = await c.match(nome); return r ? await r.json() : padrao; } catch { return padrao; } }
+async function mostrarPendentes() {
+  const c = await caches.open("gf-agenda");
+  const agenda = await lerJSON(c, "agenda.json", null);
+  if (!agenda || !Array.isArray(agenda.avisos)) return;
+  const mostrados = await lerJSON(c, "mostrados.json", []);
+  const agora = Date.now(); let mudou = false;
+  for (const a of agenda.avisos) {
+    if (a.at <= agora && a.at > agora - 4 * 3600e3 && !mostrados.includes(a.id)) {
+      await self.registration.showNotification(a.titulo, { body: a.corpo, tag: "gf-backup", icon: "icons/icon-192.png", data: { url: "./" } });
+      mostrados.push(a.id); mudou = true;
+    }
+  }
+  if (mudou) await c.put("mostrados.json", new Response(JSON.stringify(mostrados.slice(-200))));
+}
+self.addEventListener("periodicsync", (e) => { if (e.tag === "gf-lembretes") e.waitUntil(mostrarPendentes()); });
+self.addEventListener("notificationclick", (e) => {
+  e.notification.close();
+  e.waitUntil(self.clients.matchAll({ type: "window", includeUncontrolled: true }).then((cs) => {
+    const meu = cs.find((c) => c.url.startsWith(self.registration.scope));
+    return meu ? meu.focus() : self.clients.openWindow("./");
+  }));
 });

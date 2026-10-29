@@ -549,3 +549,11 @@ i.pi { background: var(--laranja-graf); }
 .senha-caixa input { padding-right: 48px; }
 .senha-caixa .olho { position: absolute; right: 4px; top: 50%; transform: translateY(-50%); width: 42px; height: 42px; display: grid; place-items: center; color: #777; }
 .senha-caixa .olho svg.ic { width: 21px; height: 21px; }
+
+/* ----- v2.9: lembrete de backup ----- */
+.lembrete.alerta { background: #FFF1D6; }
+.lembrete-bt { flex-wrap: wrap; row-gap: 4px; }
+.mov-sel.quatro { grid-template-columns: repeat(4, 1fr); }
+.linha-notif { display: flex; align-items: center; gap: 10px; margin-top: 14px; padding: 12px; border-radius: 12px; background: var(--cinza-claro); font-size: 14px; }
+.linha-notif span { flex: 1; min-width: 0; }
+.linha-notif .btn { width: auto; padding: 8px 12px; font-size: 14px; }
