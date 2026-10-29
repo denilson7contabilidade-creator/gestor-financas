@@ -539,3 +539,13 @@ i.pi { background: var(--laranja-graf); }
 .lembrete > .bola { flex: none; }
 .lembrete > .bola svg.ic { width: 20px; height: 20px; }
 .lembrete-bt a + button { background: transparent; color: var(--preto); }
+/* ----- v2.7: sugestões de nota e mostrar senha ----- */
+.sug { display: flex; gap: 6px; overflow-x: auto; margin: -2px 0 8px; scrollbar-width: none; }
+.sug::-webkit-scrollbar { display: none; }
+.sug button { flex: none; display: flex; align-items: center; gap: 5px; padding: 6px 11px; border-radius: 99px; background: var(--branco); border: 1.2px solid #D5D5D5; font-size: 13.5px; white-space: nowrap; max-width: 60%; overflow: hidden; text-overflow: ellipsis; }
+.sug button svg.ic { width: 13px; height: 13px; color: #999; flex: none; }
+.sug button:active { background: var(--fundo-suave); }
+.senha-caixa { position: relative; display: block; }
+.senha-caixa input { padding-right: 48px; }
+.senha-caixa .olho { position: absolute; right: 4px; top: 50%; transform: translateY(-50%); width: 42px; height: 42px; display: grid; place-items: center; color: #777; }
+.senha-caixa .olho svg.ic { width: 21px; height: 21px; }

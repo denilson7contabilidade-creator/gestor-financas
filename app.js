@@ -1,7 +1,7 @@
 "use strict";
 /* Gestor de Finanças — app instalável, dados guardados só no aparelho e criptografados. */
 
-const VERSAO_APP = "2.7";
+const VERSAO_APP = "2.8";
 const $ = (s, el = document) => el.querySelector(s);
 const esc = (t) => String(t ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const ic = (n) => `<svg class="ic" viewBox="0 0 24 24">${ICONES[n] || ICONES["circle-ellipsis"]}</svg>`;
@@ -1141,6 +1141,7 @@ function abrirEditor(l, opc = {}) {
     <div class="add-corpo" data-corpo></div>
     <div class="teclado-area">
       <div class="visor"><div class="chips" data-chips></div><div class="valor"><div class="num" data-vis>0</div><small data-res></small></div></div>
+      <div class="sug" data-sug hidden></div>
       <div class="nota"><span>Nota:</span><input data-nota maxlength="80" placeholder="Insira uma nota…" enterkeyhint="done"><button class="bt-repetir" data-repetirmes hidden></button></div>
       <div class="teclado">
         <button data-k="7">7</button><button data-k="8">8</button><button data-k="9">9</button><button class="data" data-data>${ic("calendar")}<span data-datatxt></span></button>
@@ -1152,7 +1153,7 @@ function abrirEditor(l, opc = {}) {
 
   const nota = $("[data-nota]", el);
   nota.value = E.nota || "";
-  nota.oninput = () => (E.nota = nota.value);
+  nota.oninput = () => { E.nota = nota.value; pintarSugestoes(); };
   // ✓ / Enter do teclado do celular: fecha o teclado para voltar ao valor e finalizar
   nota.onkeydown = (e) => { if (e.key === "Enter") { e.preventDefault(); nota.blur(); } };
 
@@ -1234,6 +1235,7 @@ function abrirEditor(l, opc = {}) {
     corpo.querySelectorAll("[data-c]").forEach((b) => (b.onclick = () => {
       E.cat = b.dataset.c;
       corpo.querySelectorAll("[data-c]").forEach((x) => x.classList.toggle("sel", x === b));
+      pintarSugestoes();
     }));
     const bt = $("[data-todas]", corpo);
     if (bt) bt.onclick = () => { todasCats = true; pintarCorpo(); };
@@ -1467,6 +1469,34 @@ function abrirEditor(l, opc = {}) {
   };
 
   if (!E.cat && E.tipo !== "transf") E.cat = ultimo(E.tipo);
+  // Sugestões de nota: as 5 mais recentes (primeiro as da categoria escolhida)
+  function pintarSugestoes() {
+    const box = $("[data-sug]", el);
+    if (E.tipo !== "despesa" && E.tipo !== "receita") { box.hidden = true; return; }
+    const sem = (t) => String(t || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
+    const digitado = sem(nota.value);
+    const vistos = new Set(), mesma = [], outras = [];
+    const recentes = S.d.lancs.filter((x) => x.tipo === E.tipo && x.nota && x.nota.trim())
+      .sort((a, b) => b.data.localeCompare(a.data) || b.id.localeCompare(a.id));
+    for (const x of recentes) {
+      const k = sem(x.nota);
+      if (vistos.has(k) || k === digitado || (digitado && !k.includes(digitado))) continue;
+      vistos.add(k);
+      (x.cat === E.cat ? mesma : outras).push(x);
+    }
+    const lista = [...mesma, ...outras].slice(0, 5);
+    box.hidden = !lista.length;
+    box.innerHTML = lista.map((x) => `<button type="button" data-n="${esc(x.nota)}" data-nc="${x.cat || ""}">${ic("clock")}${esc(x.nota)}</button>`).join("");
+    box.querySelectorAll("[data-n]").forEach((b) => (b.onclick = () => {
+      nota.value = E.nota = b.dataset.n;
+      // usa também a categoria que costuma acompanhar essa nota
+      if (b.dataset.nc && b.dataset.nc !== E.cat && S.d.categorias.some((c) => c.id === b.dataset.nc && c.tipo === E.tipo)) { E.cat = b.dataset.nc; pintarCorpo(); }
+      pintarSugestoes();
+    }));
+  }
+  const pintarCorpo0 = pintarCorpo;
+  pintarCorpo = function () { pintarCorpo0(); pintarSugestoes(); };
+
   pintarTipos(); pintarCorpo(); pintarChips(); pintarVisor(); pintarData();
 }
 
@@ -2073,6 +2103,29 @@ async function exportarCSV() {
   const csv = "﻿" + linhas.map((r) => r.map((c) => `"${String(c).replace(/"/g, '""')}"`).join(";")).join("\r\n");
   await entregarArquivo(`gestor-financas-${hoje()}.csv`, csv, "text/csv");
 }
+
+/* ================= MOSTRAR SENHA ================= */
+// Coloca um "olho" em todo campo de senha para ver o que foi digitado
+function olhosSenha(raiz = document) {
+  raiz.querySelectorAll('input[type="password"]:not([data-olho])').forEach((inp) => {
+    inp.dataset.olho = "1";
+    const caixa = document.createElement("span");
+    caixa.className = "senha-caixa";
+    inp.replaceWith(caixa);
+    const bt = document.createElement("button");
+    bt.type = "button"; bt.className = "olho"; bt.setAttribute("aria-label", "Mostrar senha"); bt.innerHTML = ic("eye");
+    bt.onclick = (e) => {
+      e.preventDefault();
+      const ver = inp.type === "password";
+      inp.type = ver ? "text" : "password";
+      bt.innerHTML = ic(ver ? "eye-off" : "eye");
+      bt.setAttribute("aria-label", ver ? "Esconder senha" : "Mostrar senha");
+      inp.focus();
+    };
+    caixa.append(inp, bt);
+  });
+}
+new MutationObserver(() => olhosSenha()).observe(document.body, { childList: true, subtree: true });
 
 /* ================= INÍCIO ================= */
 
