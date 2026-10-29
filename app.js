@@ -1,7 +1,7 @@
 "use strict";
 /* Gestor de Finanças — app instalável, dados guardados só no aparelho e criptografados. */
 
-const VERSAO_APP = "2.9";
+const VERSAO_APP = "3.0";
 const $ = (s, el = document) => el.querySelector(s);
 const esc = (t) => String(t ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const ic = (n) => `<svg class="ic" viewBox="0 0 24 24">${ICONES[n] || ICONES["circle-ellipsis"]}</svg>`;
@@ -1801,13 +1801,64 @@ function gerirFixos() {
   const el = abrirCamada(`<div data-c></div>`, { aoFechar: () => desenhar() });
   const pintar = () => {
     $("[data-c]", el).innerHTML = `<h2>Lançamentos recorrentes</h2>
-      <p style="text-align:center;color:#666;margin:-6px 0 10px;font-size:14px">Aparecem todo mês no Início para você confirmar com um toque. Para criar, toque em <b>↻ Recorrente</b> ao adicionar ou editar um lançamento.</p>
+      <p style="text-align:center;color:#666;margin:-6px 0 10px;font-size:14px">Aparecem todo mês no Início para você confirmar com um toque. Crie aqui ou toque em <b>↻ Recorrente</b> ao adicionar ou editar um lançamento.</p>
+      <button class="btn preto" data-novofixo style="margin-bottom:10px">${ic("plus")}Novo recorrente</button>
       <div class="lista-escolha">${S.d.fixos.length ? S.d.fixos.map((f) => `<button data-e="${f.id}">${bola(cat(f.cat).icone, cat(f.cat).cor)}
         <span>${esc(f.nota || cat(f.cat).nome)}<br><small style="color:#777">${f.tipo === "receita" ? "Receita" : "Despesa"} · todo dia ${f.dia}${f.fim ? ` até ${nomeMes(somaMes(f.fim, -1))}` : ""} · ${fmtR(f.valor)}${f.cartao ? " · " + esc(cartao(f.cartao).nome) : ""}</small></span><span class="ok">${ic("pencil")}</span></button>`).join("")
         : `<p class="vazio" style="padding:24px">Nenhum lançamento fixo ainda.</p>`}</div>`;
     el.querySelectorAll("[data-e]").forEach((b) => (b.onclick = () => editarFixo(fixoPorId(b.dataset.e), pintar)));
+    $("[data-novofixo]", el).onclick = () => novoFixo(pintar);
   };
   pintar();
+}
+
+// Criar um recorrente direto pela lista (sem lançar nada agora)
+function novoFixo(depois) {
+  let tipo = "despesa";
+  const ym = mesAtual(), diaHoje = Number(hoje().slice(8));
+  const dias = Array.from({ length: 31 }, (_, i) => `<option ${i + 1 === diaHoje ? "selected" : ""}>${i + 1}</option>`).join("");
+  const el = abrirCamada(`<h2>Novo recorrente</h2><form data-f>
+    <div class="alternar" style="margin:0 auto 14px"><button type="button" data-tp="despesa" class="ativo">Despesa</button><button type="button" data-tp="receita">Receita</button></div>
+    <label>Nota<input name="nota" maxlength="80" placeholder="Ex.: Aluguel, Internet, Salário" required></label>
+    <div class="dois"><label>Valor (R$)<input name="valor" inputmode="decimal" placeholder="0,00" required></label>
+    <label>Todo dia<select name="dia">${dias}</select></label></div>
+    <label>Categoria<select name="cat" data-cats></select></label>
+    <label>${"Pago com"}<select name="onde" data-onde></select></label>
+    <div class="dois"><label>Começa em<select name="inicio">
+      <option value="${ym}">Este mês</option><option value="${somaMes(ym, 1)}">Próximo mês</option></select></label>
+    <label>Por quanto tempo<select name="prazo"><option value="0">Sem prazo</option>
+      ${[2, 3, 4, 5, 6, 10, 12, 18, 24, 36, 48, 60].map((n) => `<option value="${n}">${n} meses</option>`).join("")}</select></label></div>
+    <p style="font-size:13px;color:#777;margin:-4px 0 12px">Todo mês ele aparece no Início em “Fixos a confirmar”. Só entra no saldo quando você confirma.</p>
+    <p class="erro" data-e></p>
+    <div class="botoes"><button class="btn preto">Criar recorrente</button></div></form>`);
+  const f = $("[data-f]", el);
+  const pintarOpcoes = () => {
+    $("[data-cats]", el).innerHTML = S.d.categorias.filter((c) => c.tipo === tipo).map((c) => `<option value="${c.id}">${esc(c.nome)}</option>`).join("");
+    const contas = S.d.contas.map((c) => `<option value="conta:${c.id}">${esc(c.nome)}</option>`).join("");
+    const cartoes = tipo === "despesa" ? S.d.cartoes.map((c) => `<option value="cartao:${c.id}">Cartão ${esc(c.nome)}</option>`).join("") : "";
+    $("[data-onde]", el).innerHTML = contas + cartoes;
+    $("[data-onde]", el).closest("label").firstChild.textContent = tipo === "despesa" ? "Pago com" : "Recebido em";
+  };
+  el.querySelectorAll("[data-tp]").forEach((b) => (b.onclick = () => {
+    tipo = b.dataset.tp;
+    el.querySelectorAll("[data-tp]").forEach((x) => x.classList.toggle("ativo", x === b));
+    pintarOpcoes();
+  }));
+  pintarOpcoes();
+  f.onsubmit = async (e) => {
+    e.preventDefault();
+    const v = lerValor(f.valor.value);
+    if (!(v > 0)) return ($("[data-e]", el).textContent = "Digite um valor válido.");
+    if (!f.cat.value) return ($("[data-e]", el).textContent = "Escolha uma categoria.");
+    const [k, id] = f.onde.value.split(":");
+    const novo = { id: novoId(), tipo, cat: f.cat.value, valor: v, nota: f.nota.value.trim(), conta: k === "conta" ? id : null, cartao: k === "cartao" ? id : null, dia: Number(f.dia.value), inicio: f.inicio.value };
+    const n = Number(f.prazo.value);
+    if (n > 0) novo.fim = somaMes(novo.inicio, n);
+    S.d.fixos.push(novo);
+    await salvar(); fechar();
+    aviso(`Recorrente criado: aparece todo dia ${novo.dia}${novo.fim ? `, até ${nomeMes(somaMes(novo.fim, -1))}` : ""}.`);
+    setTimeout(() => { depois && depois(); atualizarFundo(); }, 0);
+  };
 }
 
 function editarFixo(f, depois) {
