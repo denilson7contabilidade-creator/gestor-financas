@@ -533,3 +533,9 @@ i.pi { background: var(--laranja-graf); }
 .origem select { margin: -2px 0 4px 28px; width: calc(100% - 28px); padding: 9px 10px; }
 .inv-aviso { display: flex; flex-direction: column; gap: 10px; border: 1.5px dashed #C9B8AA; border-radius: 14px; padding: 12px; margin-bottom: 12px; font-size: 13.5px; color: #444; }
 .inv-aviso .btn { padding: 10px; font-size: 14px; }
+
+/* ----- v2.7: família de apps ----- */
+.lembrete-bt a { padding: 8px 12px; border-radius: 10px; font-size: 14px; font-weight: 600; background: var(--preto); color: #fff; text-decoration: none; }
+.lembrete > .bola { flex: none; }
+.lembrete > .bola svg.ic { width: 20px; height: 20px; }
+.lembrete-bt a + button { background: transparent; color: var(--preto); }

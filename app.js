@@ -1,7 +1,7 @@
 "use strict";
 /* Gestor de Finanças — app instalável, dados guardados só no aparelho e criptografados. */
 
-const VERSAO_APP = "2.6";
+const VERSAO_APP = "2.7";
 const $ = (s, el = document) => el.querySelector(s);
 const esc = (t) => String(t ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const ic = (n) => `<svg class="ic" viewBox="0 0 24 24">${ICONES[n] || ICONES["circle-ellipsis"]}</svg>`;
@@ -607,7 +607,7 @@ function telaInicio() {
   const doMes = S.d.lancs.filter((l) => l.data.startsWith(S.mes))
     .sort((x, y) => y.data.localeCompare(x.data) || y.id.localeCompare(x.id));
   const pend = fixosPendentes(S.mes);
-  let corpo = lembreteBackup();
+  let corpo = lembreteBackup() + cartaoFamilia();
   if (pend.length) {
     const pd = pend.filter((f) => f.tipo === "despesa").reduce((s, f) => s + f.valor, 0);
     const pr = pend.filter((f) => f.tipo === "receita").reduce((s, f) => s + f.valor, 0);
@@ -665,6 +665,35 @@ function lembreteBackup() {
   return `<div class="lembrete">${ic("download")}<div><b>Hora do backup do mês</b><small>${txt} Ele protege seus lançamentos se trocar ou perder o celular.</small>
     <div class="lembrete-bt"><button data-bk-fazer>Fazer backup</button><button data-bk-adiar>Agora não</button></div></div></div>`;
 }
+
+/* ================= FAMÍLIA DE APPS ================= */
+// Os apps ficam no mesmo endereço (…github.io), cada um na sua pasta.
+ICONES.target = ICONES.target || '<circle cx="12" cy="12" r="10" /> <circle cx="12" cy="12" r="6" /> <circle cx="12" cy="12" r="2" />';
+const FAMILIA = [
+  { id: "financas", nome: "Gestor de Finanças", desc: "Despesas, receitas, cartões e investimentos", url: "../gestor-financas/", cor: "#E0560B", icone: "wallet", marca: "gf_usuarios" },
+  { id: "metas", nome: "Gestor de Metas", desc: "Metas do ano, afazeres do dia e compras", url: "../gestor-metas/", cor: "#3A3FBF", icone: "target", marca: "gm_dados" },
+];
+const ESTE_APP = "financas";
+const usaApp = (a) => { try { return !!localStorage.getItem(a.marca); } catch { return false; } };
+function cartaoFamilia() {
+  const outro = FAMILIA.find((a) => a.id !== ESTE_APP && !usaApp(a));
+  let dispensado = false; try { dispensado = !!outro && localStorage.getItem("gf_sem_familia_" + outro.id) === "1"; } catch {}
+  if (!outro || dispensado) return "";
+  return `<div class="lembrete"><span class="bola cor" style="--cc:${outro.cor};width:38px;height:38px">${ic(outro.icone)}</span><div><b>Novo na família: ${outro.nome}</b><small>${outro.desc}. Instale também e use junto com este.</small>
+    <div class="lembrete-bt"><a href="${outro.url}">Conhecer</a><button data-x-familia="${outro.id}">Agora não</button></div></div></div>`;
+}
+document.addEventListener("click", (e) => {
+  const x = e.target.closest("[data-x-familia]");
+  if (!x) return;
+  e.stopPropagation();
+  try { localStorage.setItem("gf_sem_familia_" + x.dataset.xFamilia, "1"); } catch {}
+  x.closest(".lembrete").remove();
+}, true);
+const secaoFamilia = () => `<section class="secao"><h2>Apps da família</h2><div class="cartao-box">
+  ${FAMILIA.map((a) => a.id === ESTE_APP
+    ? `<div class="linha-opc"><span class="bola cor" style="--cc:${a.cor}">${ic(a.icone)}</span><span class="meio">${a.nome}<small>${a.desc}</small></span><small style="color:var(--cinza);font-weight:600">Este app</small></div>`
+    : `<a class="linha-opc" href="${a.url}" style="color:inherit;text-decoration:none"><span class="bola cor" style="--cc:${a.cor}">${ic(a.icone)}</span><span class="meio">${a.nome}<small>${a.desc}</small></span><span class="seta">${ic("chevron-right")}</span></a>`).join("")}
+</div></section>`;
 
 function itemLanc(l, comData) {
   let icone, titulo, sub = "", sinal, cor = null;
@@ -1062,6 +1091,7 @@ function telaPerfil() {
       ${op("codigo", "lock", "Gerar novo código de recuperação", "O código antigo deixa de valer")}
       ${op("sair", "log-out", "Sair", "")}
     </div></section>
+    ${secaoFamilia()}
     <p style="text-align:center;color:#999;font-size:12px;margin:22px 0 0">Gestor de Finanças ${VERSAO_APP} · criado por <b style="color:#666">Denilson Carvalho</b><br>Dados guardados só neste aparelho · Ícones: Lucide (licença ISC)</p>
     <p style="text-align:center;margin:10px 0 0"><button class="link" style="font-size:13.5px" data-atualizar>Procurar atualização</button></p>
     </div>`;

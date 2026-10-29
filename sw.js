@@ -1,7 +1,7 @@
 // Guarda os arquivos do app no celular para funcionar sem internet.
 // Com internet, sempre busca a versão mais nova; sem internet (ou com rede lenta),
 // usa a cópia guardada.
-const VERSAO = "gf-v17";
+const VERSAO = "gf-v18";
 const ARQUIVOS = [
   "./",
   "index.html",
@@ -27,14 +27,17 @@ self.addEventListener("install", (e) => {
 self.addEventListener("activate", (e) => {
   e.waitUntil(
     caches.keys()
-      .then((ks) => Promise.all(ks.filter((k) => k !== VERSAO).map((k) => caches.delete(k))))
+      // só apaga caches deste app ("gf-"): o Gestor de Metas fica no mesmo endereço
+      .then((ks) => Promise.all(ks.filter((k) => k.startsWith("gf-") && k !== VERSAO).map((k) => caches.delete(k))))
       .then(() => self.clients.claim())
   );
 });
 
 self.addEventListener("fetch", (e) => {
   const req = e.request;
-  if (req.method !== "GET" || new URL(req.url).origin !== location.origin) return;
+  const url = new URL(req.url);
+  // só cuida dos arquivos da própria pasta (os outros apps da família têm o seu)
+  if (req.method !== "GET" || url.origin !== location.origin || !url.pathname.startsWith(new URL(self.registration.scope).pathname)) return;
   e.respondWith(
     caches.open(VERSAO).then(async (cache) => {
       const daRede = fetch(req, { cache: "no-cache" })
