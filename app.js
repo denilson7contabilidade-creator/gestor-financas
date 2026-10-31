@@ -1,7 +1,7 @@
 "use strict";
 /* Gestor de Finanças — app instalável, dados guardados só no aparelho e criptografados. */
 
-const VERSAO_APP = "3.1";
+const VERSAO_APP = "3.2";
 const $ = (s, el = document) => el.querySelector(s);
 const esc = (t) => String(t ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const ic = (n) => `<svg class="ic" viewBox="0 0 24 24">${ICONES[n] || ICONES["circle-ellipsis"]}</svg>`;
@@ -651,8 +651,9 @@ function telaInicio() {
         <div class="col"><span>Receitas</span><b class="num">${fmt(t.rec)}</b></div>
         <div class="col"><span>Saldo</span><b class="num">${fmt(t.saldo)}</b></div>
       </div>
-      <div class="faixa">
+      <div class="faixa ${[S.d.contas.some(ehBenef), S.d.invest.length, fatMes].filter(Boolean).length >= 3 ? "quatro" : ""}">
         <button class="faixa-it" data-aba="relatorios"><span>${ic("wallet")}Saldo em conta</span><b class="num">${fmtR(saldoReal)}</b></button>
+        ${S.d.contas.some(ehBenef) ? `<button class="faixa-it" data-aba="relatorios"><span>${ic("ticket")}Benefícios</span><b class="num">${fmtR(S.d.contas.filter(ehBenef).reduce((t, c) => t + saldoConta(c.id), 0))}</b></button>` : ""}
         ${S.d.invest.length ? `<button class="faixa-it" data-abririnv><span>${ic("piggy-bank")}Investido</span><b class="num">${fmtR(totalInvestido())}</b></button>` : ""}
         ${fatMes ? `<button class="faixa-it" data-aba="relatorios"><span>${ic("credit-card")}Faturas cartões</span><b class="num">${fmtR(fatMes)}</b></button>` : ""}
       </div>

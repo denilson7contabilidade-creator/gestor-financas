@@ -561,3 +561,6 @@ i.pi { background: var(--laranja-graf); }
 /* ----- v3.1 ----- */
 html { background: var(--branco); }
 .benef-op { margin-bottom: 6px !important; }
+
+/* ----- v3.2 ----- */
+.faixa.quatro { grid-template-columns: 1fr 1fr; }
