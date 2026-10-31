@@ -18,7 +18,7 @@
 html, body { margin: 0; height: 100%; overscroll-behavior-y: none; }
 body {
   font-family: Roboto, "Segoe UI", system-ui, -apple-system, sans-serif;
-  background: var(--fundo);
+  background: var(--branco);
   color: var(--preto);
   font-size: 16px;
   line-height: 1.35;
@@ -557,3 +557,7 @@ i.pi { background: var(--laranja-graf); }
 .linha-notif { display: flex; align-items: center; gap: 10px; margin-top: 14px; padding: 12px; border-radius: 12px; background: var(--cinza-claro); font-size: 14px; }
 .linha-notif span { flex: 1; min-width: 0; }
 .linha-notif .btn { width: auto; padding: 8px 12px; font-size: 14px; }
+
+/* ----- v3.1 ----- */
+html { background: var(--branco); }
+.benef-op { margin-bottom: 6px !important; }

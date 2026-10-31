@@ -1,7 +1,7 @@
 "use strict";
 /* Gestor de Finanças — app instalável, dados guardados só no aparelho e criptografados. */
 
-const VERSAO_APP = "3.0";
+const VERSAO_APP = "3.1";
 const $ = (s, el = document) => el.querySelector(s);
 const esc = (t) => String(t ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const ic = (n) => `<svg class="ic" viewBox="0 0 24 24">${ICONES[n] || ICONES["circle-ellipsis"]}</svg>`;
@@ -302,6 +302,8 @@ const bola = (icone, cor) => `<span class="bola${cor ? " cor" : ""}"${cor ? ` st
 const CORES_CAT = ["#E0560B", "#C62828", "#D81B60", "#8E24AA", "#3949AB", "#1E88E5", "#00897B", "#43A047", "#B8860B", "#6D4C41", "#546E7A", "#111111"];
 
 const cat = (id) => S.d.categorias.find((c) => c.id === id) || { nome: "Sem categoria", icone: "tag" };
+const ehBenef = (c) => !!(c && c.beneficio);
+const icConta = (c) => (ehBenef(c) ? "ticket" : "wallet");
 const conta = (id) => S.d.contas.find((c) => c.id === id) || { nome: "Conta removida" };
 const cartao = (id) => S.d.cartoes.find((c) => c.id === id) || { nome: "Cartão removido", fechamento: 1, vencimento: 10 };
 
@@ -317,17 +319,18 @@ function faturaDe(cid, iso) {
 const faturaAberta = (cid) => faturaDe(cid, hoje());
 
 function totaisMes(ym) {
-  let des = 0, rec = 0, cart = 0, pagFat = 0, apl = 0, resg = 0;
+  let des = 0, rec = 0, cart = 0, pagFat = 0, apl = 0, resg = 0, benD = 0, benR = 0;
   for (const l of S.d.lancs) {
     if (!l.data.startsWith(ym)) continue;
-    if (l.tipo === "despesa") { des += l.valor; if (l.cartao) cart += l.valor; }
-    else if (l.tipo === "receita") rec += l.valor;
+    const ben = l.conta && ehBenef(S.d.contas.find((c) => c.id === l.conta));
+    if (l.tipo === "despesa") { des += l.valor; if (l.cartao) cart += l.valor; else if (ben) benD += l.valor; }
+    else if (l.tipo === "receita") { rec += l.valor; if (ben) benR += l.valor; }
     else if (l.tipo === "fatura") pagFat += l.valor;
     else if (l.tipo === "aplic") apl += l.valor;
     else if (l.tipo === "resg") resg += l.valor;
   }
   // saldo do mês = o que entrou − o que saiu da conta (despesas pagas, faturas e aplicações) + resgates
-  return { des, rec, cart, pagFat, apl, resg, saldo: rec - (des - cart) - pagFat - apl + resg };
+  return { des, rec, cart, pagFat, apl, resg, saldo: (rec - benR) - (des - cart - benD) - pagFat - apl + resg };
 }
 
 // Saldo real da conta: só conta o que já aconteceu (até hoje)
@@ -637,7 +640,7 @@ function telaInicio() {
       corpo += ls.map((l) => itemLanc(l)).join("");
     }
   }
-  const saldoReal = S.d.contas.reduce((s, c) => s + saldoConta(c.id), 0);
+  const saldoReal = S.d.contas.filter((c) => !ehBenef(c)).reduce((s, c) => s + saldoConta(c.id), 0);
   // soma das faturas de todos os cartões que vencem no mês exibido
   const fatMes = S.d.cartoes.reduce((s, c) => s + infoFatura(c.id, S.mes).total, 0);
   return `<header class="topo">
@@ -785,6 +788,7 @@ function itemLanc(l, comData) {
     icone = c.icone; cor = c.cor; titulo = l.nota || c.nome; sinal = l.tipo === "despesa" ? "- " : "+ ";
     if (l.nota) partes.push(esc(c.nome));
     if (l.cartao) partes.push(`${ic("credit-card")}${esc(cartao(l.cartao).nome)}`);
+    else if (l.conta && ehBenef(S.d.contas.find((x) => x.id === l.conta))) partes.push(`${ic("ticket")}${esc(conta(l.conta).nome)}`);
     if (l.parc) partes.push(`${l.parc.n}/${l.parc.t}`);
     if (l.fixo) partes.push(`${ic("repeat")}Fixo`);
   }
@@ -1005,11 +1009,12 @@ function blocoComparativo() {
 
 /* ----- Relatórios ----- */
 function telaRelatorios() {
-  const contas = S.d.contas.map((c) => {
-    const s = saldoConta(c.id);
-    return `<div class="linha-opc"><span class="bola">${ic("wallet")}</span><span class="meio">${esc(c.nome)}</span><b class="num">${fmtR(s)}</b></div>`;
-  }).join("");
-  const totalContas = S.d.contas.reduce((s, c) => s + saldoConta(c.id), 0);
+  const linhaConta = (c) => `<div class="linha-opc"><span class="bola">${ic(icConta(c))}</span><span class="meio">${esc(c.nome)}${ehBenef(c) ? "<small>Cartão de benefício</small>" : ""}</span><b class="num">${fmtR(saldoConta(c.id))}</b></div>`;
+  const normais = S.d.contas.filter((c) => !ehBenef(c)), benefs = S.d.contas.filter(ehBenef);
+  const contas = normais.map(linhaConta).join("") + (benefs.length
+    ? `<div class="total-linha"><span>Total em conta</span><span class="num">${fmtR(normais.reduce((s, c) => s + saldoConta(c.id), 0))}</span></div>` + benefs.map(linhaConta).join("")
+      + `<div class="total-linha"><span>Total em benefícios</span><span class="num">${fmtR(benefs.reduce((s, c) => s + saldoConta(c.id), 0))}</span></div>` : "");
+  const totalContas = benefs.length ? null : S.d.contas.reduce((s, c) => s + saldoConta(c.id), 0);
 
   const cartoes = S.d.cartoes.map((c) => {
     const ym = faturaAberta(c.id);
@@ -1037,7 +1042,7 @@ function telaRelatorios() {
 
   return `<header class="cab"><h1>Relatórios</h1></header><div class="conteudo">${blocoComparativo()}
     <section class="secao"><h2>Saldo das contas</h2><div class="cartao-box">${contas}
-      <div class="total-linha"><span>Total</span><span class="num">${fmtR(totalContas)}</span></div></div></section>
+      ${totalContas === null ? "" : `<div class="total-linha"><span>Total</span><span class="num">${fmtR(totalContas)}</span></div>`}</div></section>
     <section class="secao"><h2>Investimentos e patrimônio</h2><div class="cartao-box">${S.d.invest.length
       ? `<div class="linha-opc"><span class="bola">${ic("trending-up")}</span><span class="meio">Patrimônio total<small>Contas + investimentos</small></span><b class="num">${fmtR(patrimonio())}</b></div>
          <div class="linha-opc"><span class="bola">${ic("piggy-bank")}</span><span class="meio">Investido<small>Rendeu ${sinalR(movsPeriodo(mesAtual().slice(0, 4)).rend)} em ${mesAtual().slice(0, 4)}</small></span><b class="num">${fmtR(totalInvestido())}</b></div>
@@ -1145,7 +1150,7 @@ function telaPerfil() {
     <div class="conteudo">${faixaInstalar("Instale o app na tela inicial.")}
     <section class="secao"><h2>Cadastros</h2><div class="cartao-box">
       ${op("categorias", "tag", "Categorias", `${S.d.categorias.length} categorias`)}
-      ${op("contas", "wallet", "Contas", "Onde fica seu dinheiro (banco, carteira…)")}
+      ${op("contas", "wallet", "Contas e benefícios", "Banco, carteira, VA, VR, vale combustível…")}
       ${op("invest", "piggy-bank", "Investimentos", S.d.invest.length ? `${S.d.invest.length} cadastrado${S.d.invest.length > 1 ? "s" : ""} · ${fmtR(totalInvestido())}` : "Poupança, CDB, Tesouro, metas…")}
       ${op("fixos", "repeat", "Lançamentos recorrentes (fixos)", S.d.fixos.length ? `${S.d.fixos.length} todo mês` : "Aluguel, salário, internet…")}
       ${op("cartoes", "credit-card", "Cartões de crédito", S.d.cartoes.length ? S.d.cartoes.map((c) => c.nome).join(", ") : "Nenhum cadastrado")}
@@ -1320,13 +1325,16 @@ function abrirEditor(l, opc = {}) {
     const box = $("[data-chips]", el);
     if (E.tipo === "transf" || E.tipo === "invest") { box.innerHTML = ""; pintarRepetir(); return; }
     const pagoCom = E.cartao ? `<button class="chip cartao" data-pg>${ic("credit-card")}<span>${esc(cartao(E.cartao).nome)}</span></button>`
-      : `<button class="chip" data-pg>${ic("wallet")}<span>${esc(conta(E.conta).nome)}</span></button>`;
+      : `<button class="chip" data-pg>${ic(icConta(conta(E.conta)))}<span>${esc(conta(E.conta).nome)}</span></button>`;
     const podeParc = (E.cartao || E.tipo === "receita") && !(editando && l.parc) && !opc.fixo && !E.repetir;
     const parc = podeParc ? `<button class="chip" data-parc>${E.parcelas}x</button>` : "";
     box.innerHTML = pagoCom + parc;
     pintarRepetir();
     $("[data-pg]", box).onclick = async () => {
-      const ops = S.d.contas.map((c) => ({ valor: "conta:" + c.id, rotulo: c.nome, icone: "wallet", grupo: "Sai do saldo", sub: "Dinheiro, Pix ou débito" }));
+      const ops = S.d.contas.filter((c) => !ehBenef(c)).map((c) => ({ valor: "conta:" + c.id, rotulo: c.nome, icone: "wallet", grupo: E.tipo === "despesa" ? "Sai do saldo em conta" : "Conta", sub: "Dinheiro, Pix ou débito" }));
+      const gB = "Cartão de benefício (VA, VR, combustível)";
+      S.d.contas.filter(ehBenef).forEach((c) => ops.push({ valor: "conta:" + c.id, rotulo: c.nome, icone: "ticket", grupo: gB, sub: `Saldo do benefício: ${fmtR(saldoConta(c.id))} · sem fatura` }));
+      ops.push({ valor: "novobenef", rotulo: "Cadastrar cartão de benefício", icone: "plus", grupo: S.d.contas.some(ehBenef) ? undefined : gB, sub: "Vale alimentação, refeição, combustível…" });
       if (E.tipo === "despesa") {
         S.d.cartoes.forEach((c) => ops.push({ valor: "cartao:" + c.id, rotulo: c.nome, icone: "credit-card", grupo: "Cartão de crédito (não sai do saldo)", sub: `Entra na fatura de ${nomeMes(faturaDe(c.id, E.data))}` }));
         ops.push({ valor: "novo", rotulo: "Cadastrar cartão de crédito", icone: "plus", grupo: S.d.cartoes.length ? undefined : "Cartão de crédito (não sai do saldo)" });
@@ -1334,6 +1342,7 @@ function abrirEditor(l, opc = {}) {
       const v = await escolher(E.tipo === "despesa" ? "Pago com" : "Recebido em", ops, E.cartao ? "cartao:" + E.cartao : "conta:" + E.conta);
       if (!v) return;
       if (v === "novo") return editarCartao(null, (c) => { E.cartao = c.id; pintarChips(); });
+      if (v === "novobenef") return editarConta(null, (c) => { if (c) { E.cartao = null; E.conta = c.id; E.parcelas = 1; } pintarChips(); }, { beneficio: true });
       const [k, id] = v.split(":");
       if (k === "cartao") { E.cartao = id; } else { E.cartao = null; E.conta = id; E.parcelas = 1; }
       pintarChips();
@@ -2048,20 +2057,25 @@ function gerirContas() {
     $("[data-c]", el).innerHTML = `<h2>Contas</h2><p style="text-align:center;color:#666;margin:-6px 0 10px;font-size:14px">Onde seu dinheiro fica: banco, carteira, poupança…</p>
       ${S.d.contas.length > 1 ? `<button class="btn contorno" data-transf style="margin-bottom:10px">${ic("arrow-left-right")}Transferir entre contas</button>`
         : `<p class="dica-ordem">${ic("arrow-left-right")} Com duas ou mais contas, aparece aqui a opção de transferir dinheiro entre elas.</p>`}
-      <div class="lista-escolha" data-contas>${S.d.contas.map((c) => `<button data-e="${c.id}"><span class="bola">${ic("wallet")}</span><span>${esc(c.nome)}<br><small style="color:#777">Saldo: ${fmtR(saldoConta(c.id))}</small></span><span class="ok">${ic("pencil")}</span></button>`).join("")}
-      <button data-nova><span class="bola">${ic("plus")}</span><b>Nova conta</b></button></div>`;
+      <div class="lista-escolha" data-contas>${S.d.contas.map((c) => `<button data-e="${c.id}"><span class="bola">${ic(icConta(c))}</span><span>${esc(c.nome)}<br><small style="color:#777">${ehBenef(c) ? "Benefício · " : ""}Saldo: ${fmtR(saldoConta(c.id))}</small></span><span class="ok">${ic("pencil")}</span></button>`).join("")}
+      <button data-nova><span class="bola">${ic("plus")}</span><b>Nova conta</b></button>
+      <button data-novab><span class="bola">${ic("ticket")}</span><span><b>Novo cartão de benefício</b><br><small style="color:#777">VA, VR, vale combustível (sem fatura)</small></span></button></div>`;
     el.querySelectorAll("[data-e]").forEach((b) => (b.onclick = () => editarConta(S.d.contas.find((c) => c.id === b.dataset.e), pintar)));
     $("[data-nova]", el).onclick = () => editarConta(null, pintar);
+    $("[data-novab]", el).onclick = () => editarConta(null, pintar, { beneficio: true });
     const tr = $("[data-transf]", el); if (tr) tr.onclick = () => abrirEditor(null, { transf: true });
   };
   pintar();
   gerirContas.repintar = pintar;
 }
 
-function editarConta(c, depois) {
-  const el = abrirCamada(`<h2>${c ? "Editar conta" : "Nova conta"}</h2><form data-f>
-    <label>Nome<input name="nome" maxlength="24" value="${esc(c ? c.nome : "")}" placeholder="Ex.: Banco, Carteira" required></label>
-    <label>Saldo inicial (R$)<input name="saldo" inputmode="decimal" value="${c ? nf2.format((c.saldoInicial || 0) / 100) : "0,00"}"><small style="color:#888">Quanto havia na conta quando você começou a usar o app. Pode ser negativo.</small></label>
+function editarConta(c, depois, opc = {}) {
+  const benef = c ? ehBenef(c) : !!opc.beneficio;
+  const el = abrirCamada(`<h2>${c ? (benef ? "Editar cartão de benefício" : "Editar conta") : benef ? "Novo cartão de benefício" : "Nova conta"}</h2><form data-f>
+    <label>Nome<input name="nome" maxlength="24" value="${esc(c ? c.nome : "")}" placeholder="${benef ? "Ex.: VA Alelo, VR Sodexo, Vale combustível" : "Ex.: Banco, Carteira"}" required></label>
+    <label class="marcar benef-op"><input type="checkbox" name="benef" ${benef ? "checked" : ""}> É cartão de benefício (VA, VR, vale combustível)</label>
+    <p class="benef-dica" style="font-size:13px;color:#777;margin:-4px 0 12px">Funciona como uma carteira: o crédito do benefício entra como <b>receita</b> recebida nele, e o que você gasta sai do saldo dele. <b>Não gera fatura</b> e não mexe no "Saldo em conta".</p>
+    <label>${benef ? "Saldo disponível hoje (R$)" : "Saldo inicial (R$)"}<input name="saldo" inputmode="decimal" value="${c ? nf2.format((benef ? saldoConta(c.id) : c.saldoInicial || 0) / 100) : "0,00"}"><small style="color:#888">${benef ? "Quanto tem no cartão agora. O app ajusta para bater com esse valor." : "Quanto havia na conta quando você começou a usar o app. Pode ser negativo."}</small></label>
     <p class="erro" data-e></p>
     <div class="botoes"><button class="btn preto">Salvar</button>${c ? `<button type="button" class="btn perigo" data-apagar>Apagar conta</button>` : ""}</div></form>`);
   $("[data-f]", el).onsubmit = async (e) => {
@@ -2070,9 +2084,15 @@ function editarConta(c, depois) {
     let s = txt ? lerValor(txt.replace(/^-/, "")) : 0;
     if (!Number.isFinite(s)) return ($("[data-e]", el).textContent = "Saldo inválido.");
     if (neg) s = -s;
-    if (c) Object.assign(c, { nome: f.nome.value.trim(), saldoInicial: s });
-    else S.d.contas.push({ id: novoId(), nome: f.nome.value.trim(), saldoInicial: s });
-    await salvar(); fechar(); aviso("Conta salva."); setTimeout(depois, 0);
+    const ehB = f.benef.checked;
+    let alvo = c;
+    if (!c) { alvo = { id: novoId(), nome: "", saldoInicial: 0 }; S.d.contas.push(alvo); }
+    alvo.nome = f.nome.value.trim();
+    if (ehB) alvo.beneficio = true; else delete alvo.beneficio;
+    // benefício: o valor digitado é o saldo de hoje; conta comum: é o saldo inicial
+    if (benef && c) { alvo.saldoInicial = 0; alvo.saldoInicial = s - saldoConta(alvo.id); }
+    else alvo.saldoInicial = s;
+    await salvar(); fechar(); aviso(ehB ? "Cartão de benefício salvo." : "Conta salva."); setTimeout(() => depois && depois(alvo), 0);
   };
   const ap = $("[data-apagar]", el);
   if (ap) ap.onclick = async () => {
@@ -2103,7 +2123,11 @@ function editarCartao(c, depois) {
     <div class="dois"><label>Dia que fecha<select name="fech">${dias(c ? c.fechamento : 1)}</select></label>
     <label>Dia que vence<select name="venc">${dias(c ? c.vencimento : 10)}</select></label></div>
     <p style="font-size:13px;color:#777;margin:-4px 0 14px">Compras feitas a partir do dia do fechamento entram na fatura seguinte.</p>
-    <div class="botoes"><button class="btn preto">Salvar</button>${c ? `<button type="button" class="btn perigo" data-apagar>Apagar cartão</button>` : ""}</div></form>`);
+    <div class="botoes"><button class="btn preto">Salvar</button>
+      ${c ? `<button type="button" class="btn contorno" data-virarbenef>${ic("ticket")}É um cartão de benefício (VA/VR)</button>` : `<p style="font-size:13px;color:#777;margin:0;text-align:center">Vale alimentação, refeição ou combustível? Cadastre em <b>Perfil → Contas</b> como cartão de benefício, sem fatura.</p>`}
+      ${c ? `<button type="button" class="btn perigo" data-apagar>Apagar cartão</button>` : ""}</div></form>`);
+  const vb = $("[data-virarbenef]", el);
+  if (vb) vb.onclick = () => converterEmBeneficio(c, depois);
   $("[data-f]", el).onsubmit = async (e) => {
     e.preventDefault();
     const f = e.target, dados = { nome: f.nome.value.trim(), fechamento: Number(f.fech.value), vencimento: Number(f.venc.value) };
@@ -2117,6 +2141,33 @@ function editarCartao(c, depois) {
     if (!(await confirmar("Apagar cartão", `Apagar “${c.nome}”?`, "Apagar", true))) return;
     S.d.cartoes = S.d.cartoes.filter((x) => x.id !== c.id);
     await salvar(); fechar(); aviso("Cartão apagado."); setTimeout(() => depois ? depois() : desenhar(), 0);
+  };
+}
+
+// Um cartão cadastrado como crédito que na verdade é VA/VR: vira cartão de benefício.
+// As compras passam a sair do saldo dele e os "pagamentos de fatura" (que tiravam da conta) são apagados.
+function converterEmBeneficio(c, depois) {
+  const compras = S.d.lancs.filter((l) => l.cartao === c.id && l.tipo === "despesa");
+  const pagas = S.d.lancs.filter((l) => l.cartao === c.id && l.tipo === "fatura");
+  const totPag = pagas.reduce((s, l) => s + l.valor, 0);
+  const sh = abrirCamada(`<h2>Transformar em cartão de benefício</h2>
+    <p style="color:#555;margin:-6px 0 12px;text-align:center;font-size:14.5px">“${esc(c.nome)}” deixa de ter fatura. ${compras.length} compra(s) passam a sair do saldo do benefício.
+      ${pagas.length ? `<br><b>${pagas.length} pagamento(s) de fatura (${fmtR(totPag)})</b> serão apagados e esse valor <b>volta para o seu Saldo em conta</b>.` : ""}</p>
+    <form data-f><label>Saldo disponível hoje no cartão (R$)<input name="saldo" inputmode="decimal" placeholder="0,00"><small style="color:#888">Olhe no app do benefício quanto tem agora.</small></label>
+    <div class="botoes"><button class="btn preto">Transformar</button></div></form>`);
+  $("[data-f]", sh).onsubmit = async (e) => {
+    e.preventDefault();
+    const s = e.target.saldo.value.trim() ? lerValor(e.target.saldo.value) : 0;
+    if (!Number.isFinite(s)) return aviso("Saldo inválido.");
+    const nova = { id: novoId(), nome: c.nome, saldoInicial: 0, beneficio: true };
+    S.d.contas.push(nova);
+    for (const l of compras) { l.cartao = null; l.conta = nova.id; }
+    for (const f of S.d.fixos) if (f.cartao === c.id) { f.cartao = null; f.conta = nova.id; }
+    S.d.lancs = S.d.lancs.filter((l) => !(l.cartao === c.id && l.tipo === "fatura"));
+    S.d.cartoes = S.d.cartoes.filter((x) => x.id !== c.id);
+    nova.saldoInicial = s - saldoConta(nova.id);
+    await salvar(); fecharTudo(); desenhar();
+    aviso(`Pronto: “${c.nome}” agora é cartão de benefício, sem fatura.`);
   };
 }
 
