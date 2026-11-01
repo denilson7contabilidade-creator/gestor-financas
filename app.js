@@ -1,7 +1,7 @@
 "use strict";
 /* Gestor de Finanças — app instalável, dados guardados só no aparelho e criptografados. */
 
-const VERSAO_APP = "3.2";
+const VERSAO_APP = "3.3";
 const $ = (s, el = document) => el.querySelector(s);
 const esc = (t) => String(t ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const ic = (n) => `<svg class="ic" viewBox="0 0 24 24">${ICONES[n] || ICONES["circle-ellipsis"]}</svg>`;
@@ -363,10 +363,17 @@ const vencimentoData = (cid, ym) => `${ym}-${p2(Math.min(cartao(cid).vencimento,
 
 /* ================= INTERFACE: BÁSICO ================= */
 
-function aviso(txt) {
+function aviso(txt, acao) {
   const a = $("#aviso");
   a.textContent = txt; a.hidden = false;
-  clearTimeout(aviso.t); aviso.t = setTimeout(() => (a.hidden = true), 2400);
+  a.classList.toggle("com-acao", !!acao);
+  if (acao) {
+    const b = document.createElement("button");
+    b.textContent = acao.rotulo;
+    b.onclick = () => { a.hidden = true; acao.fn(); };
+    a.appendChild(b);
+  }
+  clearTimeout(aviso.t); aviso.t = setTimeout(() => (a.hidden = true), acao ? 6000 : 2400);
 }
 
 // Camadas (telas e folhas por cima) com suporte ao botão "voltar" do Android
@@ -643,16 +650,18 @@ function telaInicio() {
   const saldoReal = S.d.contas.filter((c) => !ehBenef(c)).reduce((s, c) => s + saldoConta(c.id), 0);
   // soma das faturas de todos os cartões que vencem no mês exibido
   const fatMes = S.d.cartoes.reduce((s, c) => s + infoFatura(c.id, S.mes).total, 0);
+  const aPagar = fixosPendentes(S.mes).filter((f) => f.tipo === "despesa" && !f.cartao).reduce((s, f) => s + f.valor, 0);
   return `<header class="topo">
       <div class="topo-linha"><h1>Gestor de Finanças</h1><button class="bt-busca" data-busca aria-label="Buscar">${ic("search")}</button></div>
-      <div class="resumo">
+      <button class="hero" data-aba="relatorios"><span class="hero-t">${ic("wallet")}Saldo em conta <small>hoje</small></span>
+        <b class="num ${saldoReal < 0 ? "neg" : ""}">${fmtR(saldoReal)}</b>
+        ${aPagar ? `<small class="hero-p">${ic("repeat")}Fixos a pagar em ${MES3[m - 1].replace(".", "")}: <b class="num">${fmtR(aPagar)}</b></small>` : ""}</button>
+      <div class="resumo dois">
         <button class="sel-mes" data-mes><small>${a}</small><b>${MES3[m - 1]} ▾</b></button>
-        <div class="col"><span>Despesas</span><b class="num">${fmt(t.des)}</b></div>
-        <div class="col"><span>Receitas</span><b class="num">${fmt(t.rec)}</b></div>
-        <div class="col"><span>Saldo</span><b class="num">${fmt(t.saldo)}</b></div>
+        <div class="col"><span>Despesas do mês</span><b class="num">${fmt(t.des)}</b></div>
+        <div class="col"><span>Receitas do mês</span><b class="num">${fmt(t.rec)}</b></div>
       </div>
-      <div class="faixa ${[S.d.contas.some(ehBenef), S.d.invest.length, fatMes].filter(Boolean).length >= 3 ? "quatro" : ""}">
-        <button class="faixa-it" data-aba="relatorios"><span>${ic("wallet")}Saldo em conta</span><b class="num">${fmtR(saldoReal)}</b></button>
+      <div class="mini">
         ${S.d.contas.some(ehBenef) ? `<button class="faixa-it" data-aba="relatorios"><span>${ic("ticket")}Benefícios</span><b class="num">${fmtR(S.d.contas.filter(ehBenef).reduce((t, c) => t + saldoConta(c.id), 0))}</b></button>` : ""}
         ${S.d.invest.length ? `<button class="faixa-it" data-abririnv><span>${ic("piggy-bank")}Investido</span><b class="num">${fmtR(totalInvestido())}</b></button>` : ""}
         ${fatMes ? `<button class="faixa-it" data-aba="relatorios"><span>${ic("credit-card")}Faturas cartões</span><b class="num">${fmtR(fatMes)}</b></button>` : ""}
@@ -1200,7 +1209,7 @@ function abrirEditor(l, opc = {}) {
         destino: fonte.destino || S.d.contas[1]?.id, data: editando ? l.data : hoje(), expr: nf0.format(fonte.valor / 100).replace(/\./g, ""), parcelas: 1, repetir: 0 }
     : { tipo: "despesa", cat: null, expr: "", nota: "", data: hoje(), conta: S.d.contas[0]?.id, cartao: null, parcelas: 1, destino: S.d.contas[1]?.id, repetir: 0 };
   if (!fonte && S.mes !== mesAtual()) E.data = `${S.mes}-01`;
-  if (opc.fixo) E.data = dataFixo(opc.fixo, opc.ym);
+  if (opc.fixo) { const v = dataFixo(opc.fixo, opc.ym); E.data = v < hoje() ? v : hoje(); }
   if (E.conta && !S.d.contas.some((c) => c.id === E.conta)) E.conta = S.d.contas[0]?.id;
   if (E.cartao && !S.d.cartoes.some((c) => c.id === E.cartao)) E.cartao = null;
   // investimentos
@@ -1507,7 +1516,7 @@ function abrirEditor(l, opc = {}) {
       msg = E.tipo === "receita" ? `Receita lançada em ${n}x de ${fmtR(cada)}, uma por mês.` : `Lançado no cartão em ${n}x. Não saiu do saldo.`;
     } else {
       const novo = { ...base, id: novoId() };
-      if (opc.fixo) { novo.fixo = opc.fixo.id; msg = "Fixo confirmado."; }
+      if (opc.fixo) { novo.fixo = opc.fixo.id; novo.fixoMes = opc.ym; msg = "Confirmado."; }
       else if (E.repetir) {
         const f = { id: novoId(), tipo: base.tipo, cat: base.cat, valor: base.valor, nota: base.nota, conta: base.conta, cartao: base.cartao, dia: Number(E.data.slice(8)), inicio: E.data.slice(0, 7) };
         if (E.repetir > 0) f.fim = somaMes(f.inicio, E.repetir);
@@ -1544,8 +1553,9 @@ function abrirEditor(l, opc = {}) {
       if (!v) return;
       S.d.lancs = v === "todas" ? S.d.lancs.filter((x) => !(x.parc && x.parc.g === alvo.parc.g)) : S.d.lancs.filter((x) => x.id !== alvo.id);
     } else {
-      const txtFixo = alvo.fixo && fixoPorId(alvo.fixo) ? " Ele volta a aparecer como fixo a confirmar neste mês." : "";
-      if (!(await confirmar("Apagar lançamento", `${alvo.nota || (ehInvest(alvo.tipo) ? `${MOVS[alvo.tipo]} · ${invest(alvo.inv).nome}` : alvo.tipo === "transf" ? "Transferência" : cat(alvo.cat).nome)} · ${fmtR(alvo.valor)}.${txtFixo}`, "Apagar", true))) return;
+      const ehFixo = alvo.fixo && fixoPorId(alvo.fixo);
+      const txtFixo = ehFixo ? " Ele sai do saldo e volta para “Fixos a confirmar”, como se não tivesse sido pago." : "";
+      if (!(await confirmar(ehFixo ? "Desfazer confirmação" : "Apagar lançamento", `${alvo.nota || (ehInvest(alvo.tipo) ? `${MOVS[alvo.tipo]} · ${invest(alvo.inv).nome}` : alvo.tipo === "transf" ? "Transferência" : cat(alvo.cat).nome)} · ${fmtR(alvo.valor)}.${txtFixo}`, ehFixo ? "Desfazer" : "Apagar", true))) return;
       S.d.lancs = S.d.lancs.filter((x) => x.id !== alvo.id);
     }
     await salvar(); fechar(); aviso("Lançamento apagado."); atualizarFundo();
@@ -1796,15 +1806,35 @@ function dataFixo(f, ym) {
 // Fixos que ainda não foram confirmados (nem pulados) no mês
 function fixosPendentes(ym) {
   return S.d.fixos
-    .filter((f) => f.inicio <= ym && (!f.fim || ym < f.fim) && !S.d.pulados.includes(f.id + "|" + ym) && !S.d.lancs.some((l) => l.fixo === f.id && l.data.startsWith(ym)))
+    .filter((f) => f.inicio <= ym && (!f.fim || ym < f.fim) && !S.d.pulados.includes(f.id + "|" + ym) && !S.d.lancs.some((l) => l.fixo === f.id && (l.fixoMes || l.data.slice(0, 7)) === ym))
     .sort((a, b) => a.dia - b.dia);
 }
-async function confirmarFixoRapido(fid, ym) {
+// Confirmar = já paguei/recebi. Pergunta a data, porque normalmente é antes ou depois do vencimento.
+function confirmarFixoRapido(fid, ym) {
   const f = fixoPorId(fid);
   if (!f) return;
-  const novo = { id: novoId(), tipo: f.tipo, valor: f.valor, nota: f.nota || "", data: dataFixo(f, ym), cat: f.cat, conta: f.cartao ? null : (S.d.contas.some((c) => c.id === f.conta) ? f.conta : S.d.contas[0].id), cartao: f.cartao && S.d.cartoes.some((c) => c.id === f.cartao) ? f.cartao : null, fixo: f.id };
-  S.d.lancs.push(novo);
-  await salvar(); aviso("Fixo confirmado."); desenhar();
+  const venc = dataFixo(f, ym), hj = hoje(), rec = f.tipo === "receita";
+  const c = cat(f.cat);
+  const el = abrirCamada(`<h2>${rec ? "Já recebeu?" : "Já pagou?"}</h2>
+    <p style="text-align:center;color:#555;margin:-6px 0 14px">${esc(f.nota || c.nome)} · <b>${fmtR(f.valor)}</b><br>${rec ? "Previsto" : "Vence"} dia ${dataCurta(venc)}.
+      Só confirme quando o dinheiro ${rec ? "entrar" : "sair"} de verdade: aí ele entra no saldo.</p>
+    <div class="botoes">
+      <button class="btn preto" data-dt="${hj}">${rec ? "Recebi" : "Paguei"} hoje (${dataCurta(hj)})</button>
+      ${venc < hj ? `<button class="btn contorno" data-dt="${venc}">${rec ? "Recebi" : "Paguei"} no dia ${dataCurta(venc)}</button>` : ""}
+      <label style="margin:4px 0 0">Outra data<input type="date" data-outra max="${hj}"></label>
+      <button class="btn leve" data-nao>${rec ? "Ainda não recebi" : "Ainda não paguei"}</button>
+    </div>`);
+  const usar = async (data) => {
+    const novo = { id: novoId(), tipo: f.tipo, valor: f.valor, nota: f.nota || "", data, cat: f.cat, conta: f.cartao ? null : (S.d.contas.some((x) => x.id === f.conta) ? f.conta : S.d.contas[0].id), cartao: f.cartao && S.d.cartoes.some((x) => x.id === f.cartao) ? f.cartao : null, fixo: f.id, fixoMes: ym };
+    S.d.lancs.push(novo);
+    await salvar(); fechar(); desenhar();
+    aviso(rec ? "Recebimento confirmado." : "Pagamento confirmado.", { rotulo: "Desfazer", fn: async () => {
+      S.d.lancs = S.d.lancs.filter((x) => x.id !== novo.id); await salvar(); desenhar(); aviso("Desfeito. Voltou para “Fixos a confirmar”.");
+    } });
+  };
+  el.querySelectorAll("[data-dt]").forEach((b) => (b.onclick = () => usar(b.dataset.dt)));
+  $("[data-outra]", el).onchange = (e) => { if (e.target.value) usar(e.target.value); };
+  $("[data-nao]", el).onclick = () => fechar();
 }
 
 function gerirFixos() {
