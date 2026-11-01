@@ -601,3 +601,15 @@ html[data-contraste="claro"] .mini .faixa-it { background: rgba(255,255,255,.85)
 .como-receb { border-style: dashed; }
 .como-receb.tem { border-style: solid; border-color: var(--preto); background: var(--fundo-suave); }
 .como-receb > span:last-child { font-size: 14px; }
+
+/* ----- v3.6: vários recebimentos por investimento ----- */
+.planos { border: 1.5px solid #E6E6E6; border-radius: 14px; padding: 10px 12px; margin-bottom: 12px; }
+.planos-cab { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
+.planos-cab b { display: flex; align-items: center; gap: 6px; font-size: 14px; }
+.planos-cab b svg.ic { width: 17px; height: 17px; }
+.planos-cab .link { font-size: 14px; }
+.planos p { margin: 0; font-size: 13px; color: #777; }
+.plano { display: flex; align-items: center; gap: 8px; padding: 8px 0; border-top: 1px solid var(--linha); font-size: 13.5px; }
+.plano span { flex: 1; }
+.plano button { width: 34px; height: 34px; display: grid; place-items: center; color: #777; flex: none; }
+.plano button svg.ic { width: 18px; height: 18px; }
