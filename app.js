@@ -1,7 +1,7 @@
 "use strict";
 /* Gestor de Finanças — app instalável, dados guardados só no aparelho e criptografados. */
 
-const VERSAO_APP = "3.3";
+const VERSAO_APP = "3.4";
 const $ = (s, el = document) => el.querySelector(s);
 const esc = (t) => String(t ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const ic = (n) => `<svg class="ic" viewBox="0 0 24 24">${ICONES[n] || ICONES["circle-ellipsis"]}</svg>`;
@@ -631,6 +631,13 @@ function telaInicio() {
         <button class="pend-ok" data-confirmar="${f.id}" aria-label="Confirmar">${ic("check")}</button></div>`;
     }).join("");
   }
+  const pInv = progPendentes(S.mes);
+  if (pInv.length) {
+    corpo += `<div class="dia-cab fixos-cab"><span>${ic("piggy-bank")} Investimentos a receber</span><span class="num">+ ${fmt(pInv.reduce((t, x) => t + x.valor, 0))}</span></div>`;
+    corpo += pInv.map((x) => `<div class="item pendente"><button class="pend-abrir" data-progok="${x.inv.id}">${bola(x.inv.icone, corInv(x.inv))}
+        <span class="meio"><div>${esc(x.inv.nome)}</div><small>${x.sub}</small></span><span class="val num">+ ${fmt(x.valor)}</span></button>
+        <button class="pend-ok" data-progok="${x.inv.id}" aria-label="Confirmar">${ic("check")}</button></div>`).join("");
+  }
   if (!doMes.length) {
     corpo += `<div class="vazio">${ic("receipt")}Nenhum lançamento em ${MESES[m - 1]}.<br>Toque no <b>+</b> para adicionar.</div>`;
   } else {
@@ -813,6 +820,8 @@ ligar.inicio = () => {
   $("[data-busca]").onclick = abrirBusca;
   const ai = $("[data-abririnv]"); if (ai) ai.onclick = abrirInvestimentos;
   $("#lista").onclick = (e) => {
+    const po = e.target.closest("[data-progok]");
+    if (po) return confirmarProg(po.dataset.progok, S.mes);
     const ok = e.target.closest("[data-confirmar]");
     if (ok) return confirmarFixoRapido(ok.dataset.confirmar, S.mes);
     const fx = e.target.closest("[data-fixo]");
@@ -1598,7 +1607,7 @@ function abrirEditor(l, opc = {}) {
 const TIPOS_INV = [
   ["Poupança", "piggy-bank"], ["CDB / RDB", "landmark"], ["Tesouro Direto", "building"], ["LCI / LCA", "shield"],
   ["Fundos", "coins"], ["Ações", "chart-line"], ["Fundos imobiliários", "house"], ["Cripto", "gem"],
-  ["Previdência", "umbrella"], ["Conta remunerada", "wallet"], ["Outros", "trending-up"],
+  ["Previdência", "umbrella"], ["Conta remunerada", "wallet"], ["Empréstimo", "handshake"], ["Outros", "trending-up"],
 ];
 const CORES_INV = ["#111111", "#E0560B", "#1E88E5", "#43A047", "#8E24AA", "#B8860B", "#00897B", "#D81B60", "#546E7A", "#6D4C41", "#3949AB"];
 const MOVS = { aplic: "Aplicar", resg: "Resgatar", rend: "Rendimento" };
@@ -1721,7 +1730,8 @@ function verInvest(id) {
     const p = i.meta > 0 ? Math.min(100, Math.max(0, (s / i.meta) * 100)) : 0;
     $("[data-c]", el).innerHTML = `<div class="inv-top">${bola(i.icone, corInv(i))}<div><h2 style="text-align:left;margin:0">${esc(i.nome)}</h2><small>${esc(i.tipo)}</small></div>
         <button class="btn contorno" data-ed style="width:auto;padding:8px 14px;margin-left:auto">${ic("pencil")}Editar</button></div>
-      <div class="inv-saldo"><small>Saldo hoje</small><b class="num">${fmtR(s)}</b><span>Rendimentos acumulados: <b class="num">${sinalR(rendTot)}</b></span></div>
+      <div class="inv-saldo"><small>Saldo hoje</small><b class="num">${fmtR(s)}</b><span>Rendimentos acumulados: <b class="num">${sinalR(rendTot)}</b></span>
+        ${i.prog ? `<span class="inv-prog">${ic("calendar-clock")}${resumoProg(i)}</span>` : ""}</div>
       ${i.saldoInicial > 0 ? `<div class="inv-aviso"><span><b class="num">${fmtR(i.saldoInicial)}</b> foi cadastrado como "já estava investido", por isso não saiu do saldo da conta nem aparece no histórico.</span>
         <button class="btn preto" data-converter>Esse valor saiu da minha conta</button></div>` : ""}
       ${i.meta > 0 ? `<div class="meta" style="padding:0 0 12px"><div class="meta-l"><b>Meta${i.metaNome ? ": " + esc(i.metaNome) : ""}</b><span class="num">${Math.floor(p)}%</span></div>
@@ -1751,6 +1761,31 @@ function verInvest(id) {
   verInvest.repintar = pintar;
 }
 
+function blocoProg(i) {
+  const p = (i && i.prog) || {}, m = p.modo || "livre";
+  const prox = somaMes(mesAtual(), 1), dias = (sel) => Array.from({ length: 31 }, (_, k) => `<option ${k + 1 === sel ? "selected" : ""}>${k + 1}</option>`).join("");
+  const val = (x) => (x ? nf2.format(x / 100) : "");
+  return `<div class="prog-box"><label>Como você recebe?<select name="modo">
+      <option value="livre" ${m === "livre" ? "selected" : ""}>Quando eu quiser (resgate livre)</option>
+      <option value="venc" ${m === "venc" ? "selected" : ""}>Tudo no vencimento (pré-fixado, CDB, Tesouro)</option>
+      <option value="parcelas" ${m === "parcelas" ? "selected" : ""}>Em parcelas mensais (empréstimo)</option>
+      <option value="mensal" ${m === "mensal" ? "selected" : ""}>Rendimento todo mês (fundo imobiliário)</option></select></label>
+    <div data-modo="venc"><div class="dois"><label>Vencimento<input type="date" name="vData" value="${p.data || ""}"></label>
+      <label>Valor que vai receber (R$)<input name="vValor" inputmode="decimal" value="${val(p.modo === "venc" && p.valor)}" placeholder="Ex.: 5.600,00"></label></div>
+      <small>No mês do vencimento ele aparece no Início para você confirmar. O app separa o que é rendimento.</small></div>
+    <div data-modo="parcelas"><div class="dois"><label>Quantas parcelas<input name="pN" type="number" inputmode="numeric" min="1" max="360" value="${p.n || ""}" placeholder="Ex.: 10"></label>
+      <label>Valor de cada parcela (R$)<input name="pValor" inputmode="decimal" value="${val(p.modo === "parcelas" && p.valor)}" placeholder="Ex.: 600,00"></label></div>
+      <div class="dois"><label>Todo dia<select name="pDia">${dias(p.dia || 10)}</select></label>
+      <label>Primeira parcela em<input type="month" name="pInicio" value="${p.modo === "parcelas" ? p.inicio : prox}"></label></div>
+      <small>Cada mês aparece no Início. Ao confirmar, o app separa os juros do valor que você emprestou.</small></div>
+    <div data-modo="mensal"><div class="dois"><label>Valor médio por mês (R$)<input name="mValor" inputmode="decimal" value="${val(p.modo === "mensal" && p.valor)}" placeholder="Ex.: 85,00"></label>
+      <label>Todo dia<select name="mDia">${dias(p.dia || 15)}</select></label></div>
+      <label>Começa em<input type="month" name="mInicio" value="${p.modo === "mensal" ? p.inicio : prox}"></label>
+      <small>Todo mês aparece no Início. Você ajusta o valor real ao confirmar ou marca “Reinvesti”.</small></div>
+    <label data-progconta>Cai na conta<select name="progConta">${S.d.contas.filter((c) => !ehBenef(c)).map((c) => `<option value="${c.id}" ${c.id === p.conta ? "selected" : ""}>${esc(c.nome)}</option>`).join("")}</select></label>
+  </div>`;
+}
+
 function editarInvest(i, depois) {
   let tipo = i ? i.tipo : TIPOS_INV[0][0];
   const el = abrirCamada(`<h2>${i ? "Editar investimento" : "Novo investimento"}</h2><form data-f>
@@ -1765,14 +1800,37 @@ function editarInvest(i, depois) {
         <select name="contaOrigem">${S.d.contas.map((c) => `<option value="${c.id}">${esc(c.nome)}</option>`).join("")}</select>
         <label class="marcar"><input type="radio" name="origem" value="ja"> Já estava investido antes do app (não mexe nas contas)</label>
       </div>`}
+    ${blocoProg(i)}
     <div class="dois"><label>Meta (opcional, R$)<input name="meta" inputmode="decimal" value="${i && i.meta ? nf2.format(i.meta / 100) : ""}" placeholder="Ex.: 10.000"></label>
     <label>Nome da meta<input name="metaNome" maxlength="28" value="${esc(i && i.metaNome ? i.metaNome : "")}" placeholder="Ex.: Reserva de emergência"></label></div>
     <p class="erro" data-e></p>
     <div class="botoes"><button class="btn preto">Salvar</button>${i ? `<button type="button" class="btn perigo" data-apagar>Apagar investimento</button>` : ""}</div></form>`);
-  el.querySelectorAll("[data-tp]").forEach((b) => (b.onclick = () => { tipo = b.dataset.tp; el.querySelectorAll("[data-tp]").forEach((x) => x.classList.toggle("sel", x === b)); }));
+  el.querySelectorAll("[data-tp]").forEach((b) => (b.onclick = () => {
+    tipo = b.dataset.tp; el.querySelectorAll("[data-tp]").forEach((x) => x.classList.toggle("sel", x === b));
+    if (tipo === "Empréstimo" && $("[name=modo]", el).value === "livre") { $("[name=modo]", el).value = "parcelas"; mostrarModo(); }
+  }));
+  const mostrarModo = () => { const m = $("[name=modo]", el).value; el.querySelectorAll("[data-modo]").forEach((d) => (d.hidden = d.dataset.modo !== m)); $("[data-progconta]", el).hidden = m === "livre"; };
+  $("[name=modo]", el).onchange = mostrarModo; mostrarModo();
   $("[data-f]", el).onsubmit = async (e) => {
     e.preventDefault();
     const f = e.target, erro = $("[data-e]", el);
+    // recebimento programado
+    let prog = null;
+    const modo = f.modo.value;
+    if (modo === "venc") {
+      const v = lerValor(f.vValor.value);
+      if (!f.vData.value || !(v > 0)) return (erro.textContent = "Informe a data e o valor que vai receber no vencimento.");
+      prog = { modo, data: f.vData.value, valor: v };
+    } else if (modo === "parcelas") {
+      const n = Math.round(Number(f.pN.value)), v = lerValor(f.pValor.value);
+      if (!(n >= 1 && n <= 360) || !(v > 0) || !f.pInicio.value) return (erro.textContent = "Informe quantas parcelas, o valor de cada uma e o mês da primeira.");
+      prog = { modo, n, valor: v, dia: Number(f.pDia.value), inicio: f.pInicio.value };
+    } else if (modo === "mensal") {
+      const v = lerValor(f.mValor.value);
+      if (!(v > 0) || !f.mInicio.value) return (erro.textContent = "Informe o valor médio do rendimento e o mês em que começa.");
+      prog = { modo, valor: v, dia: Number(f.mDia.value), inicio: f.mInicio.value };
+    }
+    if (prog) prog.conta = f.progConta.value;
     const saldo = f.saldo.value.trim() ? lerValor(f.saldo.value) : 0;
     const meta = f.meta.value.trim() ? lerValor(f.meta.value) : 0;
     if (!Number.isFinite(saldo) || saldo < 0) return (erro.textContent = "Valor aplicado inválido.");
@@ -1783,6 +1841,11 @@ function editarInvest(i, depois) {
     let alvo = i;
     if (i) Object.assign(i, dados); else { alvo = { id: novoId(), ...dados }; S.d.invest.push(alvo); }
     if (deConta) S.d.lancs.push({ id: novoId(), tipo: "aplic", valor: saldo, nota: "", data: hoje(), inv: alvo.id, conta: f.contaOrigem.value });
+    if (prog && prog.modo === "parcelas") {
+      const ant = alvo.prog;
+      prog.principal = ant && ant.modo === "parcelas" && ant.principal ? ant.principal : saldoInv(alvo.id, "9999-12-31");
+    }
+    if (prog) alvo.prog = prog; else delete alvo.prog;
     await salvar(); fechar(); aviso("Investimento salvo.");
     setTimeout(() => { depois && depois(alvo); atualizarFundo(); }, 0);
   };
@@ -1794,6 +1857,93 @@ function editarInvest(i, depois) {
     await salvar(); fechar(); aviso("Investimento apagado.");
     setTimeout(() => { depois && depois(); atualizarFundo(); }, 0);
   };
+}
+
+/* ----- Recebimentos programados de investimentos ----- */
+// prog.modo: "venc" (tudo no vencimento), "parcelas" (empréstimo / parcelas fixas), "mensal" (rendimento todo mês, ex.: FII)
+const mesesEntre = (a, b) => { const [y1, m1] = a.split("-").map(Number), [y2, m2] = b.split("-").map(Number); return (y2 - y1) * 12 + (m2 - m1); };
+const contaPadrao = (id) => (S.d.contas.some((c) => c.id === id) ? id : (S.d.contas.find((c) => !ehBenef(c)) || S.d.contas[0]).id);
+const progFeito = (inv, ym) => S.d.lancs.some((l) => l.prog === inv.id && l.progMes === ym) || S.d.pulados.includes("inv:" + inv.id + "|" + ym);
+const progRecebidas = (inv) => new Set(S.d.lancs.filter((l) => l.prog === inv.id).map((l) => l.progMes)).size;
+
+function progItem(inv, ym) {
+  const p = inv.prog;
+  if (!p || progFeito(inv, ym)) return null;
+  const diaEm = (dia) => { const [a, m] = ym.split("-").map(Number); return `${ym}-${p2(Math.min(dia, new Date(a, m, 0).getDate()))}`; };
+  if (p.modo === "venc") {
+    if (p.data.slice(0, 7) !== ym) return null;
+    return { inv, ym, data: p.data, valor: p.valor, rot: "Vencimento", sub: `vence ${dataCurta(p.data)}` };
+  }
+  if (p.modo === "parcelas") {
+    const k = mesesEntre(p.inicio, ym);
+    if (k < 0 || k >= p.n) return null;
+    return { inv, ym, data: diaEm(p.dia), valor: p.valor, rot: `Parcela ${k + 1}/${p.n}`, sub: `parcela ${k + 1}/${p.n} · dia ${dataCurta(diaEm(p.dia))}`, k, ultima: k === p.n - 1 };
+  }
+  if (p.modo === "mensal") {
+    if (mesesEntre(p.inicio, ym) < 0) return null;
+    return { inv, ym, data: diaEm(p.dia), valor: p.valor, rot: "Rendimento do mês", sub: `rendimento · dia ${dataCurta(diaEm(p.dia))}` };
+  }
+  return null;
+}
+const progPendentes = (ym) => S.d.invest.map((i) => progItem(i, ym)).filter(Boolean).sort((a, b) => a.data.localeCompare(b.data));
+
+function confirmarProg(invId, ym) {
+  const inv = S.d.invest.find((x) => x.id === invId);
+  const it = inv && progItem(inv, ym);
+  if (!it) return;
+  const p = inv.prog, hj = hoje(), saldo = saldoInv(inv.id, "9999-12-31");
+  // parte de juros e parte que é o seu dinheiro voltando
+  let juros, explica;
+  if (p.modo === "venc") { juros = it.valor - saldo; explica = `${fmtR(Math.max(0, saldo))} aplicados + <b>${fmtR(juros)}</b> de rendimento`; }
+  else if (p.modo === "parcelas") {
+    const jp = Math.round((p.n * p.valor - p.principal) / p.n);
+    juros = it.ultima ? it.valor - saldo : Math.min(jp, it.valor);
+    explica = `${fmtR(it.valor - juros)} do valor emprestado volta + <b>${fmtR(juros)}</b> de juros`;
+  } else { juros = it.valor; explica = "Rendimento do mês"; }
+  const contas = S.d.contas.filter((c) => !ehBenef(c));
+  const el = abrirCamada(`<h2>Recebeu?</h2>
+    <p style="text-align:center;color:#555;margin:-6px 0 12px">${esc(inv.nome)} · ${it.rot}<br><span data-exp>${explica}</span></p>
+    <form data-f>
+      <div class="dois"><label>Valor recebido (R$)<input name="valor" inputmode="decimal" value="${nf2.format(it.valor / 100)}" required></label>
+      <label>Caiu na conta<select name="conta">${contas.map((c) => `<option value="${c.id}" ${c.id === contaPadrao(p.conta) ? "selected" : ""}>${esc(c.nome)}</option>`).join("")}</select></label></div>
+      ${p.modo === "mensal" ? `<label class="marcar" style="margin:-4px 0 12px"><input type="checkbox" name="reinv"> Reinvesti (não caiu na conta, ficou no investimento)</label>` : ""}
+      <label>Data<input type="date" name="data" value="${it.data < hj ? it.data : hj}" max="${hj}" required></label>
+      <div class="botoes"><button class="btn preto">Confirmar recebimento</button>
+        ${p.modo === "mensal" ? `<button type="button" class="btn leve" data-pular>Não veio este mês</button>` : `<button type="button" class="btn leve" data-nao>Ainda não recebi</button>`}</div>
+    </form>`);
+  const nao = $("[data-nao]", el); if (nao) nao.onclick = () => fechar();
+  const pul = $("[data-pular]", el);
+  if (pul) pul.onclick = async () => { S.d.pulados.push("inv:" + inv.id + "|" + ym); await salvar(); fechar(); desenhar(); aviso("Ok, pulado neste mês."); };
+  $("[data-f]", el).onsubmit = async (e) => {
+    e.preventDefault();
+    const f = e.target, v = lerValor(f.valor.value);
+    if (!(v > 0)) return aviso("Digite o valor recebido.");
+    const data = f.data.value, conta = f.conta.value, reinv = f.reinv && f.reinv.checked;
+    let j;
+    if (p.modo === "mensal") j = v;
+    else if (p.modo === "venc" || it.ultima) j = v - saldo;
+    else j = Math.min(Math.round((p.n * p.valor - p.principal) / p.n), v);
+    const novos = [];
+    if (j !== 0) novos.push({ id: novoId(), tipo: "rend", valor: Math.abs(j), perda: j < 0 || undefined, nota: "", data, inv: inv.id, conta: null, prog: inv.id, progMes: ym });
+    if (!reinv) novos.push({ id: novoId() + "r", tipo: "resg", valor: v, nota: "", data, inv: inv.id, conta, prog: inv.id, progMes: ym });
+    novos.forEach((n) => { if (!n.perda) delete n.perda; S.d.lancs.push(n); });
+    await salvar(); fechar(); atualizarFundo();
+    aviso(reinv ? "Rendimento registrado e reinvestido." : `Recebido: ${fmtR(v)} caiu em ${conta && S.d.contas.find((c) => c.id === conta).nome}.`, { rotulo: "Desfazer", fn: async () => {
+      const ids = novos.map((n) => n.id); S.d.lancs = S.d.lancs.filter((x) => !ids.includes(x.id)); await salvar(); atualizarFundo(); aviso("Desfeito.");
+    } });
+  };
+}
+
+function resumoProg(inv) {
+  const p = inv.prog;
+  if (!p) return "";
+  if (p.modo === "venc") return `Vence ${dataCurta(p.data)}/${p.data.slice(0, 4)} · vai receber ${fmtR(p.valor)}`;
+  if (p.modo === "parcelas") {
+    const feitas = progRecebidas(inv);
+    const prox = feitas < p.n ? `próxima em ${nomeMes(somaMes(p.inicio, feitas))}` : "todas recebidas";
+    return `${p.n}x de ${fmtR(p.valor)} · ${feitas} de ${p.n} recebidas · ${prox}`;
+  }
+  return `Rendimento todo dia ${p.dia} · cerca de ${fmtR(p.valor)} por mês`;
 }
 
 /* ================= LANÇAMENTOS FIXOS ================= */

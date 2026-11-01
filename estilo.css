@@ -584,3 +584,10 @@ html[data-contraste="claro"] .mini .faixa-it { background: rgba(255,255,255,.85)
 .mini .faixa-it b { font-size: 13.5px; font-weight: 700; }
 .aviso.com-acao { display: flex; align-items: center; gap: 14px; }
 .aviso button { color: #FFB27A; font-weight: 700; font-size: 14.5px; padding: 2px 4px; }
+
+/* ----- v3.4: recebimentos programados ----- */
+.prog-box { background: var(--cinza-claro); border-radius: 14px; padding: 12px 12px 2px; margin: 4px 0 12px; }
+.prog-box label { color: #555 !important; }
+.prog-box small { display: block; font-size: 12.5px; color: #777; margin: -4px 0 12px; }
+.inv-prog { display: flex; align-items: center; gap: 6px; margin-top: 6px; font-weight: 600; color: #333 !important; }
+.inv-prog svg.ic { width: 16px; height: 16px; flex: none; }
