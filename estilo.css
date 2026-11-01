@@ -591,3 +591,13 @@ html[data-contraste="claro"] .mini .faixa-it { background: rgba(255,255,255,.85)
 .prog-box small { display: block; font-size: 12.5px; color: #777; margin: -4px 0 12px; }
 .inv-prog { display: flex; align-items: center; gap: 6px; margin-top: 6px; font-weight: 600; color: #333 !important; }
 .inv-prog svg.ic { width: 16px; height: 16px; flex: none; }
+
+/* ----- v3.5: escolha do investimento em linha e "como vai receber" ----- */
+.grade-inv { display: flex; overflow-x: auto; gap: 8px; padding-bottom: 2px; scrollbar-width: none; }
+.grade-inv::-webkit-scrollbar { display: none; }
+.grade-inv button { flex: 0 0 108px; padding: 8px 4px; }
+.grade-inv .bola { width: 34px; height: 34px; }
+.grade-inv .bola svg.ic { width: 18px; height: 18px; }
+.como-receb { border-style: dashed; }
+.como-receb.tem { border-style: solid; border-color: var(--preto); background: var(--fundo-suave); }
+.como-receb > span:last-child { font-size: 14px; }

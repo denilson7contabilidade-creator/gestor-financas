@@ -1,7 +1,7 @@
 "use strict";
 /* Gestor de Finanças — app instalável, dados guardados só no aparelho e criptografados. */
 
-const VERSAO_APP = "3.4";
+const VERSAO_APP = "3.5";
 const $ = (s, el = document) => el.querySelector(s);
 const esc = (t) => String(t ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const ic = (n) => `<svg class="ic" viewBox="0 0 24 24">${ICONES[n] || ICONES["circle-ellipsis"]}</svg>`;
@@ -1288,14 +1288,31 @@ function abrirEditor(l, opc = {}) {
           <span class="gi-n">${esc(i.nome)}</span><small class="num">${fmtR(saldoInv(i.id))}</small></button>`).join("")}
         <button data-novoinv>${`<span class="bola">${ic("plus")}</span>`}<span class="gi-n">Novo investimento</span><small>CDB, poupança, cripto…</small></button></div>`;
       const blocoConta = `<button class="escolha-conta" data-escconta><span class="bola">${ic("wallet")}</span><span><small>${E.mov === "aplic" ? "Sai da conta" : "Volta para a conta"}</small>${esc(conta(E.conta).nome)} · <span class="num">${fmtR(saldoConta(E.conta))}</span></span></button>`;
+      const iSel = invest(E.inv);
+      const progAtual = E.progNovo !== undefined ? E.progNovo : iSel.prog || null;
+      const blocoReceb = `<button class="escolha-conta como-receb ${progAtual ? "tem" : ""}" data-comoreceb><span class="bola">${ic("calendar-clock")}</span>
+        <span><small>Como vai receber de volta</small>${progAtual ? resumoProg({ ...iSel, prog: progAtual }) : "Quando eu quiser · toque para parcelar ou pôr vencimento"}</span></button>`;
       corpo.innerHTML = `<div class="transf">
         <div class="mov-sel">${Object.entries(MOVS).map(([k, r]) => `<button data-mv="${k}" class="${E.mov === k ? "sel" : ""}" ${editando && k !== E.mov ? "disabled" : ""}>${r}</button>`).join("")}</div>
         <p class="mov-dica">${dica}</p>
-        ${E.mov === "aplic" ? blocoConta + `<div class="seta-meio">↓</div>` + blocoInv : E.mov === "resg" ? blocoInv + `<div class="seta-meio">↓</div>` + blocoConta
+        ${E.mov === "aplic" ? blocoConta + `<div class="seta-meio">↓</div>` + blocoInv + blocoReceb : E.mov === "resg" ? blocoInv + `<div class="seta-meio">↓</div>` + blocoConta
           : blocoInv + `<div class="mov-sel dois-op"><button data-pd="0" class="${!E.perda ? "sel" : ""}">Rendeu</button><button data-pd="1" class="${E.perda ? "sel" : ""}">Perdeu</button></div>`}</div>`;
       corpo.querySelectorAll("[data-mv]").forEach((b) => (b.onclick = () => { E.mov = b.dataset.mv; pintarCorpo(); }));
       corpo.querySelectorAll("[data-pd]").forEach((b) => (b.onclick = () => { E.perda = b.dataset.pd === "1"; pintarCorpo(); }));
-      corpo.querySelectorAll("[data-escinv]").forEach((b) => (b.onclick = () => { E.inv = b.dataset.escinv; pintarCorpo(); }));
+      corpo.querySelectorAll("[data-escinv]").forEach((b) => (b.onclick = () => { E.inv = b.dataset.escinv; E.progNovo = undefined; pintarCorpo(); }));
+      const cr = $("[data-comoreceb]", corpo);
+      if (cr) cr.onclick = () => {
+        const base = { ...iSel, prog: progAtual || undefined };
+        const sh = abrirCamada(`<h2>Como vai receber de volta?</h2><form data-f>${blocoProg(base)}<p class="erro" data-e></p>
+          <div class="botoes"><button class="btn preto">Usar</button></div></form>`);
+        ligarModo(sh);
+        $("[data-f]", sh).onsubmit = (e) => {
+          e.preventDefault();
+          const lp = lerProg(e.target);
+          if (lp.erro) return ($("[data-e]", sh).textContent = lp.erro);
+          E.progNovo = lp.prog; fechar(); pintarCorpo();
+        };
+      };
       $("[data-novoinv]", corpo).onclick = () => editarInvest(null, (n) => { if (n) E.inv = n.id; pintarCorpo(); });
       const ec = $("[data-escconta]", corpo);
       if (ec) ec.onclick = async () => {
@@ -1485,6 +1502,13 @@ function abrirEditor(l, opc = {}) {
         for (const k of ["cat", "cartao", "destino", "perda", "parc", "fixo"]) delete alvo[k];
         Object.assign(alvo, mov);
       } else S.d.lancs.push({ ...mov, id: novoId() });
+      if (E.mov === "aplic" && E.progNovo !== undefined) {
+        const alvoInv = S.d.invest.find((x) => x.id === E.inv);
+        if (E.progNovo) {
+          alvoInv.prog = E.progNovo;
+          if (alvoInv.prog.modo === "parcelas") alvoInv.prog.principal = saldoInv(alvoInv.id, "9999-12-31");
+        } else delete alvoInv.prog;
+      }
       await salvar(); fechar();
       aviso(editando ? "Alterações salvas." : E.mov === "aplic" ? `Aplicado em ${invest(E.inv).nome}. Não conta como despesa.` : E.mov === "resg" ? `Resgatado para ${conta(E.conta).nome}.` : E.perda ? "Perda registrada." : "Rendimento registrado.");
       if (!editando && !E.data.startsWith(S.mes)) S.mes = E.data.slice(0, 7);
@@ -1761,6 +1785,31 @@ function verInvest(id) {
   verInvest.repintar = pintar;
 }
 
+function lerProg(f) {
+  const modo = f.modo.value;
+  let prog = null;
+  if (modo === "venc") {
+    const v = lerValor(f.vValor.value);
+    if (!f.vData.value || !(v > 0)) return { erro: "Informe a data e o valor que vai receber no vencimento." };
+    prog = { modo, data: f.vData.value, valor: v };
+  } else if (modo === "parcelas") {
+    const n = Math.round(Number(f.pN.value)), v = lerValor(f.pValor.value);
+    if (!(n >= 1 && n <= 360) || !(v > 0) || !f.pInicio.value) return { erro: "Informe quantas parcelas, o valor de cada uma e o mês da primeira." };
+    prog = { modo, n, valor: v, dia: Number(f.pDia.value), inicio: f.pInicio.value };
+  } else if (modo === "mensal") {
+    const v = lerValor(f.mValor.value);
+    if (!(v > 0) || !f.mInicio.value) return { erro: "Informe o valor médio do rendimento e o mês em que começa." };
+    prog = { modo, valor: v, dia: Number(f.mDia.value), inicio: f.mInicio.value };
+  }
+  if (prog) prog.conta = f.progConta.value;
+  return { prog };
+}
+const ligarModo = (el) => {
+  const mostrar = () => { const m = $("[name=modo]", el).value; el.querySelectorAll("[data-modo]").forEach((d) => (d.hidden = d.dataset.modo !== m)); $("[data-progconta]", el).hidden = m === "livre"; };
+  $("[name=modo]", el).onchange = mostrar; mostrar();
+  return mostrar;
+};
+
 function blocoProg(i) {
   const p = (i && i.prog) || {}, m = p.modo || "livre";
   const prox = somaMes(mesAtual(), 1), dias = (sel) => Array.from({ length: 31 }, (_, k) => `<option ${k + 1 === sel ? "selected" : ""}>${k + 1}</option>`).join("");
@@ -1809,28 +1858,14 @@ function editarInvest(i, depois) {
     tipo = b.dataset.tp; el.querySelectorAll("[data-tp]").forEach((x) => x.classList.toggle("sel", x === b));
     if (tipo === "Empréstimo" && $("[name=modo]", el).value === "livre") { $("[name=modo]", el).value = "parcelas"; mostrarModo(); }
   }));
-  const mostrarModo = () => { const m = $("[name=modo]", el).value; el.querySelectorAll("[data-modo]").forEach((d) => (d.hidden = d.dataset.modo !== m)); $("[data-progconta]", el).hidden = m === "livre"; };
-  $("[name=modo]", el).onchange = mostrarModo; mostrarModo();
+  const mostrarModo = ligarModo(el);
   $("[data-f]", el).onsubmit = async (e) => {
     e.preventDefault();
     const f = e.target, erro = $("[data-e]", el);
     // recebimento programado
-    let prog = null;
-    const modo = f.modo.value;
-    if (modo === "venc") {
-      const v = lerValor(f.vValor.value);
-      if (!f.vData.value || !(v > 0)) return (erro.textContent = "Informe a data e o valor que vai receber no vencimento.");
-      prog = { modo, data: f.vData.value, valor: v };
-    } else if (modo === "parcelas") {
-      const n = Math.round(Number(f.pN.value)), v = lerValor(f.pValor.value);
-      if (!(n >= 1 && n <= 360) || !(v > 0) || !f.pInicio.value) return (erro.textContent = "Informe quantas parcelas, o valor de cada uma e o mês da primeira.");
-      prog = { modo, n, valor: v, dia: Number(f.pDia.value), inicio: f.pInicio.value };
-    } else if (modo === "mensal") {
-      const v = lerValor(f.mValor.value);
-      if (!(v > 0) || !f.mInicio.value) return (erro.textContent = "Informe o valor médio do rendimento e o mês em que começa.");
-      prog = { modo, valor: v, dia: Number(f.mDia.value), inicio: f.mInicio.value };
-    }
-    if (prog) prog.conta = f.progConta.value;
+    const lp = lerProg(f);
+    if (lp.erro) return (erro.textContent = lp.erro);
+    const prog = lp.prog;
     const saldo = f.saldo.value.trim() ? lerValor(f.saldo.value) : 0;
     const meta = f.meta.value.trim() ? lerValor(f.meta.value) : 0;
     if (!Number.isFinite(saldo) || saldo < 0) return (erro.textContent = "Valor aplicado inválido.");
