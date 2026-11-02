@@ -1,7 +1,7 @@
 "use strict";
 /* Gestor de Finanças — app instalável, dados guardados só no aparelho e criptografados. */
 
-const VERSAO_APP = "3.6";
+const VERSAO_APP = "3.7";
 const $ = (s, el = document) => el.querySelector(s);
 const esc = (t) => String(t ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const ic = (n) => `<svg class="ic" viewBox="0 0 24 24">${ICONES[n] || ICONES["circle-ellipsis"]}</svg>`;
@@ -658,16 +658,21 @@ function telaInicio() {
   const saldoReal = S.d.contas.filter((c) => !ehBenef(c)).reduce((s, c) => s + saldoConta(c.id), 0);
   // soma das faturas de todos os cartões que vencem no mês exibido
   const fatMes = S.d.cartoes.reduce((s, c) => s + infoFatura(c.id, S.mes).total, 0);
-  const aPagar = fixosPendentes(S.mes).filter((f) => f.tipo === "despesa" && !f.cartao).reduce((s, f) => s + f.valor, 0);
+  // despesas e receitas do mês: o que já aconteceu + o que ainda vai acontecer (datas futuras e fixos não confirmados)
+  const hj = hoje(), pendM = fixosPendentes(S.mes);
+  const somaL = (tipo, futuro) => S.d.lancs.filter((l) => l.tipo === tipo && l.data.startsWith(S.mes) && (futuro ? l.data > hj : l.data <= hj)).reduce((s, l) => s + l.valor, 0);
+  const desPagas = somaL("despesa", false), desAPagar = somaL("despesa", true) + pendM.filter((f) => f.tipo === "despesa").reduce((s, f) => s + f.valor, 0);
+  const recOk = somaL("receita", false), recAReceber = somaL("receita", true) + pendM.filter((f) => f.tipo === "receita").reduce((s, f) => s + f.valor, 0);
+  const linhas2 = (ok, falta, rOk, rFalta) => (ok || falta)
+    ? `<small class="sub2"><i class="ok"></i>${fmt(ok)} ${rOk}</small><small class="sub2"><i class="falta"></i>${fmt(falta)} ${rFalta}</small>` : "";
   return `<header class="topo">
       <div class="topo-linha"><h1>Gestor de Finanças</h1><button class="bt-busca" data-busca aria-label="Buscar">${ic("search")}</button></div>
       <button class="hero" data-aba="relatorios"><span class="hero-t">${ic("wallet")}Saldo em conta <small>hoje</small></span>
-        <b class="num ${saldoReal < 0 ? "neg" : ""}">${fmtR(saldoReal)}</b>
-        ${aPagar ? `<small class="hero-p">${ic("repeat")}Fixos a pagar em ${MES3[m - 1].replace(".", "")}: <b class="num">${fmtR(aPagar)}</b></small>` : ""}</button>
+        <b class="num ${saldoReal < 0 ? "neg" : ""}">${fmtR(saldoReal)}</b></button>
       <div class="resumo dois">
         <button class="sel-mes" data-mes><small>${a}</small><b>${MES3[m - 1]} ▾</b></button>
-        <div class="col"><span>Despesas do mês</span><b class="num">${fmt(t.des)}</b></div>
-        <div class="col"><span>Receitas do mês</span><b class="num">${fmt(t.rec)}</b></div>
+        <div class="col"><span>Despesas do mês</span><b class="num">${fmt(desPagas + desAPagar)}</b>${linhas2(desPagas, desAPagar, "pagas", "a pagar")}</div>
+        <div class="col"><span>Receitas do mês</span><b class="num">${fmt(recOk + recAReceber)}</b>${linhas2(recOk, recAReceber, "recebidas", "a receber")}</div>
       </div>
       <div class="mini">
         ${S.d.contas.some(ehBenef) ? `<button class="faixa-it" data-aba="relatorios"><span>${ic("ticket")}Benefícios</span><b class="num">${fmtR(S.d.contas.filter(ehBenef).reduce((t, c) => t + saldoConta(c.id), 0))}</b></button>` : ""}

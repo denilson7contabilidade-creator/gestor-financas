@@ -613,3 +613,11 @@ html[data-contraste="claro"] .mini .faixa-it { background: rgba(255,255,255,.85)
 .plano span { flex: 1; }
 .plano button { width: 34px; height: 34px; display: grid; place-items: center; color: #777; flex: none; }
 .plano button svg.ic { width: 18px; height: 18px; }
+
+/* ----- v3.7: pagas / a pagar ----- */
+.resumo.dois { align-items: start; }
+.resumo .col .sub2 { display: flex; align-items: center; gap: 5px; font-size: 11.5px; color: rgba(0,0,0,.62); line-height: 1.35; white-space: nowrap; }
+html[data-contraste="claro"] .resumo .col .sub2 { color: rgba(255,255,255,.85); }
+.sub2 i { width: 7px; height: 7px; border-radius: 50%; flex: none; }
+.sub2 i.ok { background: #1B8A4B; }
+.sub2 i.falta { background: transparent; border: 1.5px solid currentColor; }
