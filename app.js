@@ -634,12 +634,12 @@ function telaInicio() {
         <button class="pend-ok" data-confirmar="${f.id}" aria-label="Confirmar">${ic("check")}</button></div>`;
     }).join("");
   }
-  const pInv = progPendentes(S.mes);
+  const pInv = progAReceber(S.mes);
   if (pInv.length) {
     corpo += `<div class="dia-cab fixos-cab"><span>${ic("piggy-bank")} Investimentos a receber</span><span class="num">+ ${fmt(pInv.reduce((t, x) => t + x.valor, 0))}</span></div>`;
-    corpo += pInv.map((x) => `<div class="item pendente"><button class="pend-abrir" data-progok="${x.inv.id}|${x.p.id}">${bola(x.inv.icone, corInv(x.inv))}
-        <span class="meio"><div>${esc(x.inv.nome)}</div><small>${x.sub}</small></span><span class="val num">+ ${fmt(x.valor)}</span></button>
-        <button class="pend-ok" data-progok="${x.inv.id}|${x.p.id}" aria-label="Confirmar">${ic("check")}</button></div>`).join("");
+    corpo += pInv.map((x) => `<div class="item pendente"><button class="pend-abrir" data-progok="${x.inv.id}|${x.p.id}|${x.ym}">${bola(x.inv.icone, corInv(x.inv))}
+        <span class="meio"><div>${esc(x.inv.nome)}</div><small>${x.atrasada ? `<b style="color:#C62828">atrasada</b> · ` : ""}${x.sub}</small></span><span class="val num">+ ${fmt(x.valor)}</span></button>
+        <button class="pend-ok" data-progok="${x.inv.id}|${x.p.id}|${x.ym}" aria-label="Confirmar">${ic("check")}</button></div>`).join("");
   }
   if (!doMes.length) {
     corpo += `<div class="vazio">${ic("receipt")}Nenhum lançamento em ${MESES[m - 1]}.<br>Toque no <b>+</b> para adicionar.</div>`;
@@ -672,7 +672,7 @@ function telaInicio() {
   const desPagas = somaL("despesa", false), desAPagar = somaL("despesa", true) + pendM.filter((f) => f.tipo === "despesa").reduce((s, f) => s + f.valor, 0);
   // investimentos programados para cair na conta também contam como receita a receber / recebida
   const invRecebido = S.d.lancs.filter((l) => l.tipo === "resg" && l.prog && l.data.startsWith(S.mes)).reduce((s, l) => s + l.valor, 0);
-  const invAReceber = progPendentes(S.mes).reduce((s, x) => s + x.valor, 0);
+  const invAReceber = progAReceber(S.mes).reduce((s, x) => s + x.valor, 0);
   const recOk = somaL("receita", false) + invRecebido, recAReceber = somaL("receita", true) + pendM.filter((f) => f.tipo === "receita").reduce((s, f) => s + f.valor, 0) + invAReceber;
   const linhas2 = (ok, falta, rOk, rFalta) => (ok || falta)
     ? `<button class="sub2" data-consid="${rOk === "pagas" ? "despesa" : "receita"}|ok"><i class="ok"></i>${fmt(ok)} ${rOk}</button><button class="sub2" data-consid="${rOk === "pagas" ? "despesa" : "receita"}|falta"><i class="falta"></i>${fmt(falta)} ${rFalta}</button>` : "";
@@ -809,6 +809,7 @@ const ordemInicio = () => { try { return localStorage.getItem("gf_ordem_inicio")
 const quandoLancado = (l) => parseInt(String(l.id).slice(0, 8), 36) || 0;
 
 function itemLanc(l, comData) {
+  if (l.prog && ehInvest(l.tipo)) return itemReceb(l, comData);
   let icone, titulo, sub = "", sinal, cor = null;
   const partes = comData === true ? [dataCurta(l.data)] : [];
   if (ehInvest(l.tipo)) {
@@ -847,7 +848,7 @@ ligar.inicio = () => {
     const oi = e.target.closest("[data-ordini]");
     if (oi) { try { localStorage.setItem("gf_ordem_inicio", oi.dataset.ordini); } catch {} return desenhar(); }
     const po = e.target.closest("[data-progok]");
-    if (po) { const [iv, pl] = po.dataset.progok.split("|"); return confirmarProg(iv, pl, S.mes); }
+    if (po) { const [iv, pl, pm] = po.dataset.progok.split("|"); return confirmarProg(iv, pl, pm || S.mes); }
     const ok = e.target.closest("[data-confirmar]");
     if (ok) return confirmarFixoRapido(ok.dataset.confirmar, S.mes);
     const fx = e.target.closest("[data-fixo]");
@@ -863,6 +864,7 @@ ligar.inicio = () => {
 function abrirLanc(id) {
   const l = S.d.lancs.find((x) => x.id === id);
   if (!l) return;
+  if (l.prog && ehInvest(l.tipo)) return abrirReceb(l);
   if (l.tipo === "fatura") return pagarFatura(l.cartao, l.fatura, l);
   abrirEditor(l);
 }
@@ -1161,12 +1163,14 @@ function verConsiderado(tipo, qual, ym) {
     const lancs = S.d.lancs.filter((l) => l.tipo === tipo && l.data.startsWith(ym) && (ok ? jaFoi(l) : !jaFoi(l)))
       .sort((x, y) => (ok ? y.data.localeCompare(x.data) : x.data.localeCompare(y.data)) || x.id.localeCompare(y.id));
     const fixos = ok ? [] : fixosPendentes(ym).filter((f) => f.tipo === tipo);
-    const total = lancs.reduce((t, l) => t + l.valor, 0) + fixos.reduce((t, f) => t + f.valor, 0);
+    const invOk = !des && ok ? S.d.lancs.filter((l) => l.tipo === "resg" && l.prog && l.data.startsWith(ym)).sort((x, y) => y.data.localeCompare(x.data)) : [];
+    const invFalta = !des && !ok ? progAReceber(ym) : [];
+    const total = lancs.reduce((t, l) => t + l.valor, 0) + fixos.reduce((t, f) => t + f.valor, 0) + invOk.reduce((t, l) => t + l.valor, 0) + invFalta.reduce((t, x) => t + x.valor, 0);
     const noCartao = lancs.filter((l) => l.cartao);
     const titulo = des ? (ok ? "Despesas pagas" : "Despesas a pagar") : (ok ? "Receitas recebidas" : "Receitas a receber");
     const regra = ok
-      ? `Lançamentos de ${des ? "despesa" : "receita"} de ${nomeMes(ym)} com data <b>até hoje (${dataCurta(hj)})</b>.${des ? " Compras no cartão só entram aqui depois que a fatura delas for paga." : ""}`
-      : `Lançamentos de ${des ? "despesa" : "receita"} de ${nomeMes(ym)} com data <b>depois de hoje (${dataCurta(hj)})</b>${des ? ", como parcelas futuras," : ""} e os <b>fixos ainda não confirmados</b> do mês.${des ? " Inclui as <b>compras no cartão cuja fatura ainda não foi paga</b>, mesmo com data passada." : ""}`;
+      ? `Lançamentos de ${des ? "despesa" : "receita"} de ${nomeMes(ym)} com data <b>até hoje (${dataCurta(hj)})</b>.${des ? "" : " Inclui as parcelas de investimentos/empréstimos recebidas no mês."}${des ? " Compras no cartão só entram aqui depois que a fatura delas for paga." : ""}`
+      : `Lançamentos de ${des ? "despesa" : "receita"} de ${nomeMes(ym)} com data <b>depois de hoje (${dataCurta(hj)})</b>${des ? ", como parcelas futuras," : ""} e os <b>fixos ainda não confirmados</b> do mês.${des ? "" : " Inclui as <b>parcelas de investimentos/empréstimos</b> ainda não recebidas (e as atrasadas)."}${des ? " Inclui as <b>compras no cartão cuja fatura ainda não foi paga</b>, mesmo com data passada." : ""}`;
     const secao = (rot, v, html) => html ? `<div class="dia-cab"><span>${rot}</span><span class="num">${fmt(v)}</span></div>${html}` : "";
     const htmlFixos = fixos.map((f) => { const c = cat(f.cat); return `<div class="item pendente"><button class="pend-abrir" data-fixo="${f.id}">${bola(c.icone, c.cor)}
         <span class="meio"><div>${esc(f.nota || c.nome)}</div><small>dia ${dataCurta(dataFixo(f, ym))} · ${ic("repeat")}Fixo a confirmar${f.cartao ? " · " + esc(cartao(f.cartao).nome) : ""}</small></span>
@@ -1177,9 +1181,13 @@ function verConsiderado(tipo, qual, ym) {
       <p class="consid-regra">${regra}${des && noCartao.length ? `<br>Destas, <b>${fmtR(noCartao.reduce((t, l) => t + l.valor, 0))}</b> são compras no cartão${ok ? " (fatura já paga)" : " (fatura ainda não paga)"}.` : ""}</p>
       <div style="margin:0 -18px">${secao("Lançamentos", lancs.reduce((t, l) => t + l.valor, 0), lancs.map((l) => itemLanc(l, true)).join(""))}
       ${secao("Fixos a confirmar", fixos.reduce((t, f) => t + f.valor, 0), htmlFixos)}
-      ${!lancs.length && !fixos.length ? `<p class="vazio" style="padding:20px">Nada aqui em ${nomeMes(ym)}.</p>` : ""}</div>`;
+      ${secao("Investimentos recebidos", invOk.reduce((t, l) => t + l.valor, 0), invOk.map((l) => itemLanc(l, true)).join(""))}
+      ${secao("Investimentos a receber", invFalta.reduce((t, x) => t + x.valor, 0), invFalta.map((x) => `<div class="item pendente"><button class="pend-abrir" data-progok="${x.inv.id}|${x.p.id}|${x.ym}">${bola(x.inv.icone, corInv(x.inv))}
+        <span class="meio"><div>${esc(x.inv.nome)}</div><small>${x.atrasada ? `<b style="color:#C62828">atrasada</b> · ` : ""}${x.sub}</small></span><span class="val num">+ ${fmt(x.valor)}</span></button></div>`).join(""))}
+      ${!lancs.length && !fixos.length && !invOk.length && !invFalta.length ? `<p class="vazio" style="padding:20px">Nada aqui em ${nomeMes(ym)}.</p>` : ""}</div>`;
     el.querySelectorAll("[data-lanc]").forEach((b) => (b.onclick = () => abrirLanc(b.dataset.lanc)));
     el.querySelectorAll("[data-fixo]").forEach((b) => (b.onclick = () => abrirEditor(null, { fixo: fixoPorId(b.dataset.fixo), ym })));
+    el.querySelectorAll("[data-progok]").forEach((b) => (b.onclick = () => { const [iv, pl, pm] = b.dataset.progok.split("|"); confirmarProg(iv, pl, pm); }));
   };
   pintar();
   verConsiderado.repintar = pintar;
@@ -1956,7 +1964,8 @@ function editarInvest(i, depois) {
     : `<label style="margin-top:12px">Valor inicial (R$, opcional)<input name="saldo" inputmode="decimal" placeholder="0,00"></label>
       <div class="origem">
         <label class="marcar"><input type="radio" name="origem" value="conta" checked> Saiu da conta agora (desconta do saldo)</label>
-        <select name="contaOrigem">${S.d.contas.map((c) => `<option value="${c.id}">${esc(c.nome)}</option>`).join("")}</select>
+        <div class="dois"><select name="contaOrigem">${S.d.contas.map((c) => `<option value="${c.id}">${esc(c.nome)}</option>`).join("")}</select>
+        <input type="date" name="dataOrigem" value="${hoje()}" max="${hoje()}" aria-label="Data em que saiu da conta"></div>
         <label class="marcar"><input type="radio" name="origem" value="ja"> Já estava investido antes do app (não mexe nas contas)</label>
       </div>`}
     ${i ? `<p style="font-size:13px;color:#777;margin:0 0 12px">Parcelas, vencimentos e rendimentos mensais ficam na tela do investimento (toque nele → “Recebimentos programados”).</p>` : blocoProg(null)}
@@ -1985,7 +1994,7 @@ function editarInvest(i, depois) {
     const dados = { nome: f.nome.value.trim(), tipo, icone, saldoInicial: deConta ? 0 : saldo, meta, metaNome: f.metaNome.value.trim() };
     let alvo = i;
     if (i) Object.assign(i, dados); else { alvo = { id: novoId(), ...dados }; S.d.invest.push(alvo); }
-    if (deConta) S.d.lancs.push({ id: novoId(), tipo: "aplic", valor: saldo, nota: "", data: hoje(), inv: alvo.id, conta: f.contaOrigem.value });
+    if (deConta) S.d.lancs.push({ id: novoId(), tipo: "aplic", valor: saldo, nota: "", data: f.dataOrigem.value || hoje(), inv: alvo.id, conta: f.contaOrigem.value });
     if (prog) (alvo.progs ||= []).push({ ...prog, id: novoId(), principal: saldo });
     await salvar(); fechar(); aviso("Investimento salvo.");
     setTimeout(() => { depois && depois(alvo); atualizarFundo(); }, 0);
@@ -2039,28 +2048,113 @@ function progItem(inv, p, ym) {
   return null;
 }
 const progPendentes = (ym) => S.d.invest.flatMap((i) => progsDe(i).map((p) => progItem(i, p, ym))).filter(Boolean).sort((a, b) => a.data.localeCompare(b.data));
+// Parcelas e vencimentos de meses anteriores que ainda não foram confirmados
+function progAtrasadas(ymAtual) {
+  const out = [];
+  for (const i of S.d.invest) for (const p of progsDe(i)) {
+    const meses = p.modo === "parcelas" ? Array.from({ length: p.n }, (_, k) => somaMes(p.inicio, k)) : p.modo === "venc" ? [p.data.slice(0, 7)] : [];
+    for (const ym of meses) { if (ym >= ymAtual) break; const it = progItem(i, p, ym); if (it) out.push({ ...it, atrasada: true }); }
+  }
+  return out;
+}
+// O que mostrar em "Investimentos a receber": no mês atual, inclui as atrasadas
+const progAReceber = (ym) => [...(ym === mesAtual() ? progAtrasadas(ym) : []), ...progPendentes(ym)].sort((a, b) => a.data.localeCompare(b.data));
+// Meses do plano ainda não recebidos
+const progFaltam = (p) => p.modo === "parcelas" ? Array.from({ length: p.n }, (_, k) => somaMes(p.inicio, k)).filter((ym) => !progFeito(p, ym)) : p.modo === "venc" ? [p.data.slice(0, 7)].filter((ym) => !progFeito(p, ym)) : [];
+
+// Quanto de um recebimento é juros/rendimento. O resto é o valor emprestado/aplicado voltando.
+// Parcelas: cada uma devolve 1/n do valor emprestado; a última devolve o que faltar. Nunca vira "perda".
+function jurosDe(p, v) {
+  if (p.modo === "mensal") return v;
+  const resta = Math.max(0, progRestante(p));
+  if (p.modo === "venc") return v - resta;
+  const faltam = p.n - progRecebidas(p);
+  const capital = Math.min(v, faltam <= 1 ? resta : Math.min(resta, Math.round((p.principal || 0) / p.n)));
+  return v - capital;
+}
+// Grava um recebimento: resgate do valor (cai na conta) + juros/rendimento
+function registrarReceb(inv, p, ym, v, data, conta, reinv) {
+  const j = jurosDe(p, v), novos = [];
+  if (j !== 0) { const r = { id: novoId(), tipo: "rend", valor: Math.abs(j), nota: "", data, inv: inv.id, conta: null, prog: p.id, progMes: ym }; if (j < 0) r.perda = true; novos.push(r); }
+  if (!reinv) novos.push({ id: novoId() + "r", tipo: "resg", valor: v, nota: "", data, inv: inv.id, conta, prog: p.id, progMes: ym });
+  novos.forEach((n) => S.d.lancs.push(n));
+  return novos;
+}
+const planoDe = (l) => (l.prog ? progsDe(invest(l.inv)).find((p) => p.id === l.prog) || null : null);
+const grupoReceb = (l) => S.d.lancs.filter((x) => x.prog === l.prog && x.progMes === l.progMes && x.inv === l.inv && ehInvest(x.tipo));
+const rotuloReceb = (p, ym) => !p ? "Recebimento" : p.modo === "parcelas" ? `Parcela ${mesesEntre(p.inicio, ym) + 1}/${p.n}` : p.modo === "venc" ? "Vencimento" : "Rendimento do mês";
+
+// Uma linha por recebimento (em vez de "Resgate" + "Rendimento" separados)
+function itemReceb(l, comData) {
+  const g = grupoReceb(l), r = g.find((x) => x.tipo === "resg"), j = g.find((x) => x.tipo === "rend");
+  if (l.tipo !== "resg" && r) return "";
+  const i = invest(l.inv), p = planoDe(l), partes = comData === true ? [dataCurta(l.data)] : [];
+  const nomeJ = p && p.modo === "parcelas" ? "juros" : "rendimento";
+  if (r) { partes.push(esc(conta(r.conta).nome)); if (j) partes.push(`${j.perda ? "- " : ""}${fmt(j.valor)} de ${nomeJ}`); }
+  else if (p && p.modo !== "mensal") partes.push(`<b style="color:#C62828">incompleto · toque para corrigir</b>`);
+  else partes.push("reinvestido");
+  return `<button class="item" data-lanc="${l.id}">${bola(i.icone, corInv(i))}
+    <span class="meio"><div>${esc(rotuloReceb(p, l.progMes))} · ${esc(i.nome)}</div><small>${partes.join(" · ")}</small></span>
+    <span class="val num">+ ${fmt(r ? r.valor : l.valor)}</span></button>`;
+}
+
+// Ver / corrigir / desfazer um recebimento já confirmado (mexe no resgate e nos juros juntos)
+function abrirReceb(l0) {
+  const g = grupoReceb(l0), r = g.find((x) => x.tipo === "resg"), j = g.find((x) => x.tipo === "rend");
+  const base = r || j || l0, inv = S.d.invest.find((x) => x.id === base.inv), p = planoDe(base);
+  if (!inv || !p) {
+    // plano removido: só dá para desfazer
+    return (async () => { if (await confirmar("Apagar recebimento", "O plano deste recebimento não existe mais. Apagar o recebimento?", "Apagar", true)) {
+      const ids = g.map((x) => x.id); S.d.lancs = S.d.lancs.filter((x) => !ids.includes(x.id)); await salvar(); aviso("Apagado."); atualizarFundo(); desenhar(); } })();
+  }
+  const ym = base.progMes, hj = hoje(), jv = j ? (j.perda ? -j.valor : j.valor) : 0, total = r ? r.valor : 0;
+  const nomeJ = p.modo === "parcelas" ? "juros" : "rendimento";
+  const contas = S.d.contas.filter((c) => !ehBenef(c));
+  const explica = r ? `Recebido ${fmtR(total)}${p.modo !== "mensal" ? `: ${fmtR(total - jv)} do valor ${p.modo === "parcelas" ? "emprestado" : "aplicado"} voltou + ${fmtR(jv)} de ${nomeJ}` : ""}`
+    : p.modo === "mensal" ? `Rendimento de ${fmtR(jv)} reinvestido` : `<b style="color:#C62828">Falta o valor que caiu na conta.</b> Confira e salve para corrigir.`;
+  const el = abrirCamada(`<h2>${esc(rotuloReceb(p, ym))}</h2>
+    <p style="text-align:center;color:#555;margin:-6px 0 12px">${esc(inv.nome)}<br>${explica}</p>
+    <form data-f>
+      <div class="dois"><label>Valor recebido (R$)<input name="valor" inputmode="decimal" value="${nf2.format((r ? r.valor : (p.modo === "mensal" ? j.valor : p.valor)) / 100)}" required></label>
+      <label>Caiu na conta<select name="conta">${contas.map((c) => `<option value="${c.id}" ${c.id === contaPadrao(r ? r.conta : p.conta) ? "selected" : ""}>${esc(c.nome)}</option>`).join("")}</select></label></div>
+      ${p.modo === "mensal" ? `<label class="marcar" style="margin:-4px 0 12px"><input type="checkbox" name="reinv" ${r ? "" : "checked"}> Reinvesti (não caiu na conta)</label>` : ""}
+      <label>Data<input type="date" name="data" value="${base.data}" max="${hj}" required></label>
+      <p style="font-size:12.5px;color:#777;margin:0 0 10px">Ao salvar, o app recalcula quanto é ${nomeJ}.</p>
+      <div class="botoes"><button class="btn preto">Salvar</button>
+        <button type="button" class="btn perigo" data-desf>Desfazer recebimento</button></div>
+    </form>`);
+  const tirar = () => { const ids = grupoReceb(base).map((x) => x.id); S.d.lancs = S.d.lancs.filter((x) => !ids.includes(x.id)); };
+  $("[data-desf]", el).onclick = async () => {
+    if (!(await confirmar("Desfazer recebimento", `${rotuloReceb(p, ym)} de ${inv.nome} volta para “Investimentos a receber” e o valor sai do saldo da conta.`, "Desfazer", true))) return;
+    tirar(); await salvar(); fechar(); aviso("Desfeito. Voltou para “a receber”."); atualizarFundo();
+  };
+  $("[data-f]", el).onsubmit = async (e) => {
+    e.preventDefault();
+    const f = e.target, v = lerValor(f.valor.value);
+    if (!(v > 0)) return aviso("Digite o valor recebido.");
+    if (f.data.value > hj) return aviso("A data não pode ser no futuro.");
+    tirar();
+    registrarReceb(inv, p, ym, v, f.data.value, f.conta.value, f.reinv && f.reinv.checked);
+    await salvar(); fechar(); aviso("Recebimento atualizado."); atualizarFundo();
+  };
+}
 
 function confirmarProg(invId, planoId, ym) {
   const inv = S.d.invest.find((x) => x.id === invId);
   const p = inv && progsDe(inv).find((x) => x.id === planoId);
   const it = p && progItem(inv, p, ym);
   if (!it) return;
-  const hj = hoje(), resta = progRestante(p);
-  const jurosDe = (v) => {
-    if (p.modo === "mensal") return v;
-    if (p.modo === "venc" || it.ultima) return v - resta;
-    return Math.min(Math.round((p.n * p.valor - p.principal) / p.n), v);
-  };
-  const j0 = jurosDe(it.valor);
-  const explica = p.modo === "mensal" ? "Rendimento do mês" : `${fmtR(it.valor - j0)} do valor aplicado volta + <b>${fmtR(j0)}</b> de ${p.modo === "parcelas" ? "juros" : "rendimento"}`;
+  const hj = hoje(), atrasada = ym < mesAtual();
+  const j0 = jurosDe(p, it.valor);
+  const explica = p.modo === "mensal" ? "Rendimento do mês" : `${fmtR(it.valor - j0)} do valor ${p.modo === "parcelas" ? "emprestado" : "aplicado"} volta + <b>${fmtR(j0)}</b> de ${p.modo === "parcelas" ? "juros" : "rendimento"}`;
   const contas = S.d.contas.filter((c) => !ehBenef(c));
   const el = abrirCamada(`<h2>Recebeu?</h2>
-    <p style="text-align:center;color:#555;margin:-6px 0 12px">${esc(inv.nome)} · ${it.rot}<br>${explica}</p>
+    <p style="text-align:center;color:#555;margin:-6px 0 12px">${esc(inv.nome)} · ${it.rot}${atrasada ? ` · <b style="color:#C62828">de ${nomeMes(ym)}</b>` : ""}<br>${explica}</p>
     <form data-f>
       <div class="dois"><label>Valor recebido (R$)<input name="valor" inputmode="decimal" value="${nf2.format(it.valor / 100)}" required></label>
       <label>Caiu na conta<select name="conta">${contas.map((c) => `<option value="${c.id}" ${c.id === contaPadrao(p.conta) ? "selected" : ""}>${esc(c.nome)}</option>`).join("")}</select></label></div>
       ${p.modo === "mensal" ? `<label class="marcar" style="margin:-4px 0 12px"><input type="checkbox" name="reinv"> Reinvesti (não caiu na conta, ficou no investimento)</label>` : ""}
-      <label>Data<input type="date" name="data" value="${it.data < hj ? it.data : hj}" max="${hj}" required></label>
+      <label>Data<input type="date" name="data" value="${atrasada ? hj : it.data < hj ? it.data : hj}" max="${hj}" required></label>
       <div class="botoes"><button class="btn preto">Confirmar recebimento</button>
         ${p.modo === "mensal" ? `<button type="button" class="btn leve" data-pular>Não veio este mês</button>` : `<button type="button" class="btn leve" data-nao>Ainda não recebi</button>`}</div>
     </form>`);
@@ -2071,12 +2165,9 @@ function confirmarProg(invId, planoId, ym) {
     e.preventDefault();
     const f = e.target, v = lerValor(f.valor.value);
     if (!(v > 0)) return aviso("Digite o valor recebido.");
-    const data = f.data.value, conta = f.conta.value, reinv = f.reinv && f.reinv.checked;
-    const j = jurosDe(v);
-    const novos = [];
-    if (j !== 0) { const r = { id: novoId(), tipo: "rend", valor: Math.abs(j), nota: "", data, inv: inv.id, conta: null, prog: p.id, progMes: ym }; if (j < 0) r.perda = true; novos.push(r); }
-    if (!reinv) novos.push({ id: novoId() + "r", tipo: "resg", valor: v, nota: "", data, inv: inv.id, conta, prog: p.id, progMes: ym });
-    novos.forEach((n) => S.d.lancs.push(n));
+    if (f.data.value > hj) return aviso("A data não pode ser no futuro.");
+    const reinv = f.reinv && f.reinv.checked;
+    const novos = registrarReceb(inv, p, ym, v, f.data.value, f.conta.value, reinv);
     await salvar(); fechar(); atualizarFundo();
     aviso(reinv ? "Rendimento registrado e reinvestido." : `Recebido: ${fmtR(v)}.`, { rotulo: "Desfazer", fn: async () => {
       const ids = novos.map((n) => n.id); S.d.lancs = S.d.lancs.filter((x) => !ids.includes(x.id)); await salvar(); atualizarFundo(); aviso("Desfeito.");
@@ -2089,9 +2180,9 @@ function resumoProg(p) {
   const de = p.principal ? ` (aplicado ${fmtR(p.principal)})` : "";
   if (p.modo === "venc") return `Vence ${dataCurta(p.data)}/${p.data.slice(0, 4)} · vai receber ${fmtR(p.valor)}${de}`;
   if (p.modo === "parcelas") {
-    const feitas = progRecebidas(p);
-    const prox = feitas < p.n ? `próxima em ${nomeMes(somaMes(p.inicio, feitas))}` : "todas recebidas";
-    return `${p.n}x de ${fmtR(p.valor)}${de} · ${feitas} de ${p.n} recebidas · ${prox}`;
+    const faltam = progFaltam(p), atr = faltam.filter((m) => m < mesAtual()).length;
+    const prox = faltam.length ? `próxima: ${nomeMes(faltam[0])}` : "todas recebidas";
+    return `${p.n}x de ${fmtR(p.valor)}${de} · ${p.n - faltam.length} de ${p.n} recebidas · ${prox}${atr ? ` · <b style="color:#C62828">${atr} atrasada(s)</b>` : ""}${faltam.length ? ` · falta receber ${fmtR(faltam.length * p.valor)}` : ""}`;
   }
   return `Rendimento todo dia ${p.dia} · cerca de ${fmtR(p.valor)} por mês`;
 }
