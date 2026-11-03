@@ -1,7 +1,7 @@
 "use strict";
 /* Gestor de Finanças — app instalável, dados guardados só no aparelho e criptografados. */
 
-const VERSAO_APP = "3.7";
+const VERSAO_APP = "3.8";
 const $ = (s, el = document) => el.querySelector(s);
 const esc = (t) => String(t ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const ic = (n) => `<svg class="ic" viewBox="0 0 24 24">${ICONES[n] || ICONES["circle-ellipsis"]}</svg>`;
@@ -616,8 +616,10 @@ const ligar = {};
 function telaInicio() {
   const t = totaisMes(S.mes);
   const [a, m] = S.mes.split("-");
+  const porLanc = ordemInicio() === "lanc";
   const doMes = S.d.lancs.filter((l) => l.data.startsWith(S.mes))
-    .sort((x, y) => y.data.localeCompare(x.data) || y.id.localeCompare(x.id));
+    .sort(porLanc ? (x, y) => quandoLancado(y) - quandoLancado(x) || (y.id < x.id ? -1 : y.id > x.id ? 1 : 0)
+      : (x, y) => y.data.localeCompare(x.data) || y.id.localeCompare(x.id));
   const pend = fixosPendentes(S.mes);
   let corpo = lembreteBackup() + cartaoFamilia();
   if (pend.length) {
@@ -642,6 +644,12 @@ function telaInicio() {
   if (!doMes.length) {
     corpo += `<div class="vazio">${ic("receipt")}Nenhum lançamento em ${MESES[m - 1]}.<br>Toque no <b>+</b> para adicionar.</div>`;
   } else {
+    corpo += `<div class="dia-cab ordem-cab"><span>Lançamentos</span>
+      <div class="alternar det-alt"><button data-ordini="lanc" class="${porLanc ? "ativo" : ""}">Últimos lançados</button><button data-ordini="dia" class="${porLanc ? "" : "ativo"}">Por dia</button></div></div>`;
+  }
+  if (doMes.length && porLanc) {
+    corpo += doMes.map((l) => itemLanc(l, true)).join("");
+  } else if (doMes.length) {
     const dias = {};
     for (const l of doMes) (dias[l.data] ||= []).push(l);
     for (const [d, ls] of Object.entries(dias)) {
@@ -792,6 +800,11 @@ const secaoFamilia = () => `<section class="secao"><h2>Apps da família</h2><div
     : `<a class="linha-opc" href="${a.url}" style="color:inherit;text-decoration:none"><span class="bola cor" style="--cc:${a.cor}">${ic(a.icone)}</span><span class="meio">${a.nome}<small>${a.desc}</small></span><span class="seta">${ic("chevron-right")}</span></a>`).join("")}
 </div></section>`;
 
+// Ordem da lista do Início: "lanc" (últimos lançados primeiro, padrão) ou "dia" (agrupado por data)
+const ordemInicio = () => { try { return localStorage.getItem("gf_ordem_inicio") || "lanc"; } catch { return "lanc"; } };
+// Momento em que o lançamento foi criado: o id começa com Date.now() em base 36
+const quandoLancado = (l) => parseInt(String(l.id).slice(0, 8), 36) || 0;
+
 function itemLanc(l, comData) {
   let icone, titulo, sub = "", sinal, cor = null;
   const partes = comData === true ? [dataCurta(l.data)] : [];
@@ -826,6 +839,8 @@ ligar.inicio = () => {
   $("[data-busca]").onclick = abrirBusca;
   const ai = $("[data-abririnv]"); if (ai) ai.onclick = abrirInvestimentos;
   $("#lista").onclick = (e) => {
+    const oi = e.target.closest("[data-ordini]");
+    if (oi) { try { localStorage.setItem("gf_ordem_inicio", oi.dataset.ordini); } catch {} return desenhar(); }
     const po = e.target.closest("[data-progok]");
     if (po) { const [iv, pl] = po.dataset.progok.split("|"); return confirmarProg(iv, pl, S.mes); }
     const ok = e.target.closest("[data-confirmar]");

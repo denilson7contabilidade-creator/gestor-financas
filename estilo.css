@@ -621,3 +621,8 @@ html[data-contraste="claro"] .resumo .col .sub2 { color: rgba(255,255,255,.85); 
 .sub2 i { width: 7px; height: 7px; border-radius: 50%; flex: none; }
 .sub2 i.ok { background: #1B8A4B; }
 .sub2 i.falta { background: transparent; border: 1.5px solid currentColor; }
+
+/* Início: cabeçalho com a escolha de ordem da lista */
+.ordem-cab { align-items: center; padding-top: 10px; padding-bottom: 10px; }
+.ordem-cab > span:first-child { color: var(--preto); font-weight: 600; }
+.ordem-cab .det-alt button { padding: 5px 10px; font-size: 12.5px; }
