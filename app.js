@@ -1,7 +1,7 @@
 "use strict";
 /* Gestor de Finanças — app instalável, dados guardados só no aparelho e criptografados. */
 
-const VERSAO_APP = "3.11";
+const VERSAO_APP = "3.12";
 const $ = (s, el = document) => el.querySelector(s);
 const esc = (t) => String(t ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const ic = (n) => `<svg class="ic" viewBox="0 0 24 24">${ICONES[n] || ICONES["circle-ellipsis"]}</svg>`;
@@ -1373,18 +1373,20 @@ function abrirEditor(l, opc = {}) {
         : `<button class="escolha-conta" data-escconta><span class="bola">${ic("wallet")}</span><span><small>${E.mov === "aplic" ? "Sai da conta" : "Volta para a conta"}</small>${esc(conta(E.conta).nome)} · <span class="num">${fmtR(saldoConta(E.conta))}</span></span></button>`;
       const iSel = invest(E.inv);
       const progAtual = E.progNovo || null;
-      const blocoReceb = editando ? "" : `<button class="escolha-conta como-receb ${progAtual ? "tem" : ""}" data-comoreceb><span class="bola">${ic("calendar-clock")}</span>
-        <span><small>Como vai receber de volta (só esta aplicação)</small>${progAtual ? resumoProg(progAtual) : "Quando eu quiser · toque para parcelar ou pôr vencimento"}</span></button>`;
+      const planoLig = editando && l.tipo === "aplic" && l.inv === E.inv ? planoDaAplic(l) : null;
+      const blocoReceb = `<button class="escolha-conta como-receb ${planoLig || progAtual ? "tem" : ""}" data-comoreceb><span class="bola">${ic("calendar-clock")}</span>
+        <span><small>Como vai receber de volta (só esta aplicação)</small>${planoLig ? `${resumoProg(planoLig)}<br><b>Toque para alterar parcelas, valor ou dia</b>` : progAtual ? resumoProg(progAtual) : "Quando eu quiser · toque para parcelar ou pôr vencimento"}</span></button>`;
       corpo.innerHTML = `<div class="transf">
         <div class="mov-sel">${Object.entries(MOVS).map(([k, r]) => `<button data-mv="${k}" class="${E.mov === k ? "sel" : ""}" ${editando && k !== E.mov ? "disabled" : ""}>${r}</button>`).join("")}</div>
         <p class="mov-dica">${dica}</p>
-        ${E.mov === "aplic" ? blocoConta + `<div class="seta-meio">↓</div>` + blocoInv + blocoReceb : E.mov === "resg" ? blocoInv + `<div class="seta-meio">↓</div>` + blocoConta
+        ${E.mov === "aplic" ? (planoLig ? blocoReceb : "") + blocoConta + `<div class="seta-meio">↓</div>` + blocoInv + (planoLig ? "" : blocoReceb) : E.mov === "resg" ? blocoInv + `<div class="seta-meio">↓</div>` + blocoConta
           : blocoInv + `<div class="mov-sel dois-op"><button data-pd="0" class="${!E.perda ? "sel" : ""}">Rendeu</button><button data-pd="1" class="${E.perda ? "sel" : ""}">Perdeu</button></div>`}</div>`;
       corpo.querySelectorAll("[data-mv]").forEach((b) => (b.onclick = () => { E.mov = b.dataset.mv; pintarCorpo(); }));
       corpo.querySelectorAll("[data-pd]").forEach((b) => (b.onclick = () => { E.perda = b.dataset.pd === "1"; pintarCorpo(); }));
       corpo.querySelectorAll("[data-escinv]").forEach((b) => (b.onclick = () => { E.inv = b.dataset.escinv; E.progNovo = undefined; pintarCorpo(); }));
       const cr = $("[data-comoreceb]", corpo);
-      if (cr) cr.onclick = () => {
+      if (cr && planoLig) cr.onclick = () => editarPlano(S.d.invest.find((x) => x.id === E.inv), planoLig, () => pintarCorpo());
+      else if (cr) cr.onclick = () => {
         const sh = abrirCamada(`<h2>Como vai receber de volta?</h2><form data-f>${blocoProg(progAtual)}<p class="erro" data-e></p>
           <div class="botoes"><button class="btn preto">Usar</button></div></form>`);
         ligarModo(sh);
@@ -1582,14 +1584,19 @@ function abrirEditor(l, opc = {}) {
       }
       const mov = { tipo: E.mov, valor: r.valor, nota: (E.nota || "").trim(), data: E.data, inv: E.inv, conta: E.mov === "rend" || (E.mov === "aplic" && E.semConta) ? null : E.conta };
       if (E.mov === "rend" && E.perda) mov.perda = true;
+      let idAplic;
       if (editando) {
         const alvo = S.d.lancs.find((x) => x.id === l.id);
+        const plLig = alvo.tipo === "aplic" ? planoDaAplic(alvo) : null, antigo = alvo.valor;
         for (const k of ["cat", "cartao", "destino", "perda", "parc", "fixo"]) delete alvo[k];
         Object.assign(alvo, mov);
-      } else S.d.lancs.push({ ...mov, id: novoId() });
-      if (!editando && E.mov === "aplic" && E.progNovo) {
+        // o plano de recebimento acompanha o valor emprestado/aplicado
+        if (plLig) { plLig.aplic = alvo.id; if (!plLig.principal || plLig.principal === antigo) plLig.principal = r.valor; }
+        idAplic = plLig ? null : alvo.id;
+      } else { idAplic = novoId(); S.d.lancs.push({ ...mov, id: idAplic }); }
+      if (idAplic && E.mov === "aplic" && E.progNovo) {
         const alvoInv = S.d.invest.find((x) => x.id === E.inv);
-        (alvoInv.progs ||= []).push({ ...E.progNovo, id: novoId(), principal: r.valor });
+        (alvoInv.progs ||= []).push({ ...E.progNovo, id: novoId(), principal: r.valor, aplic: idAplic });
       }
       await salvar(); fechar();
       aviso(editando ? "Alterações salvas." : E.mov === "aplic" ? `Aplicado em ${invest(E.inv).nome}. Não conta como despesa.` : E.mov === "resg" ? `Resgatado para ${conta(E.conta).nome}.` : E.perda ? "Perda registrada." : "Rendimento registrado.");
@@ -1839,7 +1846,7 @@ function verInvest(id) {
       <div class="inv-saldo"><small>Saldo hoje</small><b class="num">${fmtR(s)}</b><span>Rendimentos acumulados: <b class="num">${sinalR(rendTot)}</b></span>
 </div>
       <div class="planos"><div class="planos-cab"><b>${ic("calendar-clock")}Recebimentos programados</b><button class="link" data-novoplano>+ Adicionar</button></div>
-        ${progsDe(i).length ? progsDe(i).map((pl) => `<div class="plano"><span>${resumoProg(pl)}</span><button data-edplano="${pl.id}" aria-label="Editar">${ic("pencil")}</button></div>`).join("")
+        ${progsDe(i).length ? progsDe(i).map((pl) => `<button class="plano plano-bt" data-edplano="${pl.id}"><span>${resumoProg(pl)}</span><span class="plano-ed">${ic("pencil")}Editar</span></button>`).join("")
           : `<p>Nenhum. Use para parcelas de empréstimo, vencimento de pré-fixado ou rendimento mensal.</p>`}</div>
       ${i.saldoInicial > 0 ? `<div class="inv-aviso"><span><b class="num">${fmtR(i.saldoInicial)}</b> foi cadastrado como "já estava investido", por isso não saiu do saldo da conta nem aparece no histórico.</span>
         <button class="btn preto" data-converter>Esse valor saiu da minha conta</button></div>` : ""}
@@ -1925,7 +1932,7 @@ function blocoProg(plano) {
 // Criar/editar um plano de recebimento de um investimento já existente
 function editarPlano(inv, pl, depois) {
   const sugest = pl ? pl.principal : Math.max(0, saldoInv(inv.id, "9999-12-31") - progsDe(inv).reduce((t, x) => t + Math.max(0, progRestante(x)), 0));
-  const sh = abrirCamada(`<h2>${pl ? "Editar recebimento" : "Novo recebimento programado"}</h2><form data-f>
+  const sh = abrirCamada(`<h2>${pl ? "Editar parcelas / recebimento" : "Novo recebimento programado"}</h2>${pl && progRecebidas(pl) ? `<p style="text-align:center;color:#666;margin:-6px 0 12px;font-size:13.5px">${progRecebidas(pl)} já recebida(s). Elas continuam no histórico; a mudança vale para o que falta.</p>` : ""}<form data-f>
     <label>Valor aplicado/emprestado neste plano (R$)<input name="principal" inputmode="decimal" value="${sugest ? nf2.format(sugest / 100) : ""}" placeholder="Ex.: 300,00">
       <small style="color:#888">Só a parte deste plano. Ex.: emprestou 100 em 2x e 300 em 3x → crie dois planos.</small></label>
     ${blocoProg(pl)}<p class="erro" data-e></p>
@@ -1994,8 +2001,9 @@ function editarInvest(i, depois) {
     const dados = { nome: f.nome.value.trim(), tipo, icone, saldoInicial: deConta ? 0 : saldo, meta, metaNome: f.metaNome.value.trim() };
     let alvo = i;
     if (i) Object.assign(i, dados); else { alvo = { id: novoId(), ...dados }; S.d.invest.push(alvo); }
-    if (deConta) S.d.lancs.push({ id: novoId(), tipo: "aplic", valor: saldo, nota: "", data: f.dataOrigem.value || hoje(), inv: alvo.id, conta: f.contaOrigem.value });
-    if (prog) (alvo.progs ||= []).push({ ...prog, id: novoId(), principal: saldo });
+    const idAplic = deConta ? novoId() : null;
+    if (deConta) S.d.lancs.push({ id: idAplic, tipo: "aplic", valor: saldo, nota: "", data: f.dataOrigem.value || hoje(), inv: alvo.id, conta: f.contaOrigem.value });
+    if (prog) (alvo.progs ||= []).push({ ...prog, id: novoId(), principal: saldo, ...(idAplic ? { aplic: idAplic } : {}) });
     await salvar(); fechar(); aviso("Investimento salvo.");
     setTimeout(() => { depois && depois(alvo); atualizarFundo(); }, 0);
   };
@@ -2079,6 +2087,18 @@ function registrarReceb(inv, p, ym, v, data, conta, reinv) {
   if (!reinv) novos.push({ id: novoId() + "r", tipo: "resg", valor: v, nota: "", data, inv: inv.id, conta, prog: p.id, progMes: ym });
   novos.forEach((n) => S.d.lancs.push(n));
   return novos;
+}
+// Plano de recebimento criado junto com esta aplicação (empréstimo → parcelas)
+function planoDaAplic(l) {
+  const ps = progsDe(invest(l.inv));
+  const lig = ps.find((p) => p.aplic === l.id);
+  if (lig) return lig;
+  // dados antigos, sem ligação: o plano sem dona com o mesmo valor; ou o único plano, se só houver uma aplicação
+  const soltos = ps.filter((p) => !p.aplic && p.modo !== "mensal");
+  const mesmo = soltos.filter((p) => p.principal === l.valor);
+  if (mesmo.length === 1) return mesmo[0];
+  const aplics = S.d.lancs.filter((x) => x.inv === l.inv && x.tipo === "aplic");
+  return soltos.length === 1 && aplics.length === 1 ? soltos[0] : null;
 }
 const planoDe = (l) => (l.prog ? progsDe(invest(l.inv)).find((p) => p.id === l.prog) || null : null);
 const grupoReceb = (l) => S.d.lancs.filter((x) => x.prog === l.prog && x.progMes === l.progMes && x.inv === l.inv && ehInvest(x.tipo));

@@ -630,3 +630,10 @@ html[data-contraste="claro"] .resumo .col .sub2 { color: rgba(255,255,255,.85); 
 /* Início: "pagas / a pagar" clicáveis */
 button.sub2 { background: none; border: 0; padding: 1px 0; font: inherit; cursor: pointer; text-decoration: underline; text-decoration-style: dotted; text-underline-offset: 2px; text-align: left; }
 .consid-regra { font-size: 13px; color: #666; background: var(--fundo-suave, #f6f2ee); border-radius: 10px; padding: 10px 12px; margin: 8px 0 12px; line-height: 1.4; }
+
+/* Plano de recebimento: linha inteira clicável com "Editar" visível */
+.plano-bt { width: 100%; text-align: left; display: flex; align-items: center; gap: 10px; font: inherit; color: inherit; background: none; border: 0; cursor: pointer; }
+.plano-bt > span:first-child { flex: 1; }
+.plano-ed { display: inline-flex; align-items: center; gap: 4px; flex: none; font-size: 13px; font-weight: 600; border: 1.5px solid var(--preto); border-radius: 9px; padding: 5px 9px; }
+.plano-ed svg.ic { width: 14px; height: 14px; }
+.plano span.plano-ed { flex: none; }
