@@ -1,7 +1,7 @@
 "use strict";
 /* Gestor de Finanças — app instalável, dados guardados só no aparelho e criptografados. */
 
-const VERSAO_APP = "3.9";
+const VERSAO_APP = "3.10";
 const $ = (s, el = document) => el.querySelector(s);
 const esc = (t) => String(t ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const ic = (n) => `<svg class="ic" viewBox="0 0 24 24">${ICONES[n] || ICONES["circle-ellipsis"]}</svg>`;
@@ -667,8 +667,8 @@ function telaInicio() {
   // soma das faturas de todos os cartões que vencem no mês exibido
   const fatMes = S.d.cartoes.reduce((s, c) => s + infoFatura(c.id, S.mes).total, 0);
   // despesas e receitas do mês: o que já aconteceu + o que ainda vai acontecer (datas futuras e fixos não confirmados)
-  const hj = hoje(), pendM = fixosPendentes(S.mes);
-  const somaL = (tipo, futuro) => S.d.lancs.filter((l) => l.tipo === tipo && l.data.startsWith(S.mes) && (futuro ? l.data > hj : l.data <= hj)).reduce((s, l) => s + l.valor, 0);
+  const hj = hoje(), pendM = fixosPendentes(S.mes), jaFoi = criarJaFoi(hj);
+  const somaL = (tipo, futuro) => S.d.lancs.filter((l) => l.tipo === tipo && l.data.startsWith(S.mes) && (futuro ? !jaFoi(l) : jaFoi(l))).reduce((s, l) => s + l.valor, 0);
   const desPagas = somaL("despesa", false), desAPagar = somaL("despesa", true) + pendM.filter((f) => f.tipo === "despesa").reduce((s, f) => s + f.valor, 0);
   const recOk = somaL("receita", false), recAReceber = somaL("receita", true) + pendM.filter((f) => f.tipo === "receita").reduce((s, f) => s + f.valor, 0);
   const linhas2 = (ok, falta, rOk, rFalta) => (ok || falta)
@@ -1114,6 +1114,14 @@ function verFaturas(cid, mesIni) {
   verFaturas.repintar = pintar;
 }
 
+// Diz se um lançamento já foi pago/recebido. Compra no cartão de crédito só conta como paga
+// quando a fatura em que ela caiu estiver quitada (é aí que o dinheiro sai da conta).
+function criarJaFoi(hj) {
+  const cache = {};
+  const quitada = (cid, ym) => { const k = cid + "|" + ym; if (!(k in cache)) cache[k] = infoFatura(cid, ym).falta === 0; return cache[k]; };
+  return (l) => (l.tipo === "despesa" && l.cartao && S.d.cartoes.some((c) => c.id === l.cartao)) ? quitada(l.cartao, faturaDe(l.cartao, l.data)) : l.data <= hj;
+}
+
 // Folha aberta por "Faturas cartões" no Início: as faturas que vencem no mês exibido
 function abrirFaturasMes(mesIni) {
   let ym = mesIni;
@@ -1146,16 +1154,16 @@ function abrirFaturasMes(mesIni) {
 function verConsiderado(tipo, qual, ym) {
   const el = abrirCamada(`<div data-considc></div>`, { aoFechar: () => desenhar() });
   const pintar = () => {
-    const hj = hoje(), des = tipo === "despesa", ok = qual === "ok";
-    const lancs = S.d.lancs.filter((l) => l.tipo === tipo && l.data.startsWith(ym) && (ok ? l.data <= hj : l.data > hj))
+    const hj = hoje(), des = tipo === "despesa", ok = qual === "ok", jaFoi = criarJaFoi(hj);
+    const lancs = S.d.lancs.filter((l) => l.tipo === tipo && l.data.startsWith(ym) && (ok ? jaFoi(l) : !jaFoi(l)))
       .sort((x, y) => (ok ? y.data.localeCompare(x.data) : x.data.localeCompare(y.data)) || x.id.localeCompare(y.id));
     const fixos = ok ? [] : fixosPendentes(ym).filter((f) => f.tipo === tipo);
     const total = lancs.reduce((t, l) => t + l.valor, 0) + fixos.reduce((t, f) => t + f.valor, 0);
     const noCartao = lancs.filter((l) => l.cartao);
     const titulo = des ? (ok ? "Despesas pagas" : "Despesas a pagar") : (ok ? "Receitas recebidas" : "Receitas a receber");
     const regra = ok
-      ? `Lançamentos de ${des ? "despesa" : "receita"} de ${nomeMes(ym)} com data <b>até hoje (${dataCurta(hj)})</b>.${des ? " Inclui compras no cartão: elas contam aqui pela data da compra, mesmo que a fatura ainda não tenha sido paga." : ""}`
-      : `Lançamentos de ${des ? "despesa" : "receita"} de ${nomeMes(ym)} com data <b>depois de hoje (${dataCurta(hj)})</b>${des ? ", como parcelas futuras," : ""} e os <b>fixos ainda não confirmados</b> do mês.`;
+      ? `Lançamentos de ${des ? "despesa" : "receita"} de ${nomeMes(ym)} com data <b>até hoje (${dataCurta(hj)})</b>.${des ? " Compras no cartão só entram aqui depois que a fatura delas for paga." : ""}`
+      : `Lançamentos de ${des ? "despesa" : "receita"} de ${nomeMes(ym)} com data <b>depois de hoje (${dataCurta(hj)})</b>${des ? ", como parcelas futuras," : ""} e os <b>fixos ainda não confirmados</b> do mês.${des ? " Inclui as <b>compras no cartão cuja fatura ainda não foi paga</b>, mesmo com data passada." : ""}`;
     const secao = (rot, v, html) => html ? `<div class="dia-cab"><span>${rot}</span><span class="num">${fmt(v)}</span></div>${html}` : "";
     const htmlFixos = fixos.map((f) => { const c = cat(f.cat); return `<div class="item pendente"><button class="pend-abrir" data-fixo="${f.id}">${bola(c.icone, c.cor)}
         <span class="meio"><div>${esc(f.nota || c.nome)}</div><small>dia ${dataCurta(dataFixo(f, ym))} · ${ic("repeat")}Fixo a confirmar${f.cartao ? " · " + esc(cartao(f.cartao).nome) : ""}</small></span>
@@ -1163,7 +1171,7 @@ function verConsiderado(tipo, qual, ym) {
     $("[data-considc]", el).innerHTML = `<h2>${titulo}</h2>
       <p style="text-align:center;color:#777;margin:-6px 0 4px;font-size:14px">${nomeMes(ym)}</p>
       <div style="text-align:center;font-size:28px;font-weight:700" class="num">${fmtR(total)}</div>
-      <p class="consid-regra">${regra}${des && ok && noCartao.length ? `<br>Destas, <b>${fmtR(noCartao.reduce((t, l) => t + l.valor, 0))}</b> foram no cartão.` : ""}</p>
+      <p class="consid-regra">${regra}${des && noCartao.length ? `<br>Destas, <b>${fmtR(noCartao.reduce((t, l) => t + l.valor, 0))}</b> são compras no cartão${ok ? " (fatura já paga)" : " (fatura ainda não paga)"}.` : ""}</p>
       <div style="margin:0 -18px">${secao("Lançamentos", lancs.reduce((t, l) => t + l.valor, 0), lancs.map((l) => itemLanc(l, true)).join(""))}
       ${secao("Fixos a confirmar", fixos.reduce((t, f) => t + f.valor, 0), htmlFixos)}
       ${!lancs.length && !fixos.length ? `<p class="vazio" style="padding:20px">Nada aqui em ${nomeMes(ym)}.</p>` : ""}</div>`;
