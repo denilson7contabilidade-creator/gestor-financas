@@ -1,7 +1,7 @@
 "use strict";
 /* Gestor de Finanças — app instalável, dados guardados só no aparelho e criptografados. */
 
-const VERSAO_APP = "3.8";
+const VERSAO_APP = "3.9";
 const $ = (s, el = document) => el.querySelector(s);
 const esc = (t) => String(t ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const ic = (n) => `<svg class="ic" viewBox="0 0 24 24">${ICONES[n] || ICONES["circle-ellipsis"]}</svg>`;
@@ -672,7 +672,7 @@ function telaInicio() {
   const desPagas = somaL("despesa", false), desAPagar = somaL("despesa", true) + pendM.filter((f) => f.tipo === "despesa").reduce((s, f) => s + f.valor, 0);
   const recOk = somaL("receita", false), recAReceber = somaL("receita", true) + pendM.filter((f) => f.tipo === "receita").reduce((s, f) => s + f.valor, 0);
   const linhas2 = (ok, falta, rOk, rFalta) => (ok || falta)
-    ? `<small class="sub2"><i class="ok"></i>${fmt(ok)} ${rOk}</small><small class="sub2"><i class="falta"></i>${fmt(falta)} ${rFalta}</small>` : "";
+    ? `<button class="sub2" data-consid="${rOk === "pagas" ? "despesa" : "receita"}|ok"><i class="ok"></i>${fmt(ok)} ${rOk}</button><button class="sub2" data-consid="${rOk === "pagas" ? "despesa" : "receita"}|falta"><i class="falta"></i>${fmt(falta)} ${rFalta}</button>` : "";
   return `<header class="topo">
       <div class="topo-linha"><h1>Gestor de Finanças</h1><button class="bt-busca" data-busca aria-label="Buscar">${ic("search")}</button></div>
       <button class="hero" data-aba="relatorios"><span class="hero-t">${ic("wallet")}Saldo em conta <small>hoje</small></span>
@@ -685,7 +685,7 @@ function telaInicio() {
       <div class="mini">
         ${S.d.contas.some(ehBenef) ? `<button class="faixa-it" data-aba="relatorios"><span>${ic("ticket")}Benefícios</span><b class="num">${fmtR(S.d.contas.filter(ehBenef).reduce((t, c) => t + saldoConta(c.id), 0))}</b></button>` : ""}
         ${S.d.invest.length ? `<button class="faixa-it" data-abririnv><span>${ic("piggy-bank")}Investido</span><b class="num">${fmtR(totalInvestido())}</b></button>` : ""}
-        ${fatMes ? `<button class="faixa-it" data-aba="relatorios"><span>${ic("credit-card")}Faturas cartões</span><b class="num">${fmtR(fatMes)}</b></button>` : ""}
+        ${S.d.cartoes.length ? `<button class="faixa-it" data-fatmes><span>${ic("credit-card")}Faturas cartões</span><b class="num">${fmtR(fatMes)}</b></button>` : ""}
       </div>
     </header>${faixaInstalar("Instale o app na tela inicial.")}
     <div class="conteudo" id="lista">${corpo}</div>`;
@@ -838,6 +838,8 @@ ligar.inicio = () => {
   $("[data-mes]").onclick = async () => { const m = await escolherMes(S.mes); if (m) { S.mes = m; desenhar(); } };
   $("[data-busca]").onclick = abrirBusca;
   const ai = $("[data-abririnv]"); if (ai) ai.onclick = abrirInvestimentos;
+  const fm = $("[data-fatmes]"); if (fm) fm.onclick = () => abrirFaturasMes(S.mes);
+  document.querySelectorAll("[data-consid]").forEach((b) => (b.onclick = () => { const [t, q] = b.dataset.consid.split("|"); verConsiderado(t, q, S.mes); }));
   $("#lista").onclick = (e) => {
     const oi = e.target.closest("[data-ordini]");
     if (oi) { try { localStorage.setItem("gf_ordem_inicio", oi.dataset.ordini); } catch {} return desenhar(); }
@@ -1056,22 +1058,6 @@ function telaRelatorios() {
       + `<div class="total-linha"><span>Total em benefícios</span><span class="num">${fmtR(benefs.reduce((s, c) => s + saldoConta(c.id), 0))}</span></div>` : "");
   const totalContas = benefs.length ? null : S.d.contas.reduce((s, c) => s + saldoConta(c.id), 0);
 
-  const cartoes = S.d.cartoes.map((c) => {
-    const ym = faturaAberta(c.id);
-    const ant = somaMes(ym, -1);
-    const fa = infoFatura(c.id, ant);
-    const fb = infoFatura(c.id, ym);
-    const bloco = (rot, mes, f, aberta) => {
-      const st = f.total === 0 ? "" : f.falta === 0 ? `<span class="etiqueta paga">Paga</span>` : aberta ? `<span class="etiqueta aberta">Aberta</span>` : `<span class="etiqueta">Fechada</span>`;
-      return `<div style="flex:1"><small>${rot} · vence ${dataCurta(vencimentoData(c.id, mes))}</small>
-        <div class="valf num" style="font-size:19px">${fmtR(f.total)}</div>${st}${f.pago && f.falta ? `<small> falta ${fmtR(f.falta)}</small>` : ""}</div>`;
-    };
-    return `<div class="fatura"><div class="cabf"><span class="bola">${ic("credit-card")}</span><div class="meio"><b>${esc(c.nome)}</b>
-        <small style="display:block">Fecha dia ${c.fechamento} · vence dia ${c.vencimento}</small></div></div>
-      <div style="display:flex;gap:12px;margin-top:10px">${fa.total || fa.pago ? bloco("Fatura anterior", ant, fa, false) : ""}${bloco("Fatura atual", ym, fb, true)}</div>
-      <div class="acoes"><button class="btn contorno" data-verfat="${c.id}">Ver faturas</button><button class="btn preto" data-pagar="${c.id}">Pagar fatura</button></div></div>`;
-  }).join("");
-
   const ano = S.relAno;
   let tR = 0, tD = 0, tS = 0;
   const linhasAno = MESES.map((m, i) => {
@@ -1088,8 +1074,6 @@ function telaRelatorios() {
          <div class="linha-opc"><span class="bola">${ic("piggy-bank")}</span><span class="meio">Investido<small>Rendeu ${sinalR(movsPeriodo(mesAtual().slice(0, 4)).rend)} em ${mesAtual().slice(0, 4)}</small></span><b class="num">${fmtR(totalInvestido())}</b></div>
          <button class="linha-opc" data-abririnv><span class="bola">${ic("chart-line")}</span><span class="meio">Ver investimentos<small>Evolução, metas e onde está seu dinheiro</small></span><span class="seta">${ic("chevron-right")}</span></button>`
       : `<button class="linha-opc" data-abririnv><span class="bola">${ic("plus")}</span><span class="meio">Começar a acompanhar investimentos<small>Aplicações não contam como despesa. Veja seu patrimônio crescer.</small></span></button>`}</div></section>
-    <section class="secao"><h2>Cartões de crédito</h2>${S.d.cartoes.length ? `<div class="cartao-box">${cartoes}</div>`
-      : `<div class="cartao-box"><button class="linha-opc" data-novocartao><span class="bola">${ic("plus")}</span><span class="meio">Cadastrar um cartão<small>Compras no cartão não saem do saldo até você pagar a fatura.</small></span></button></div>`}</section>
     <section class="secao"><h2>Resumo do ano</h2><div class="cartao-box">
       <div class="ano-nav"><button data-ano="-1">${ic("chevron-left")}</button><span>${ano}</span><button data-ano="1">${ic("chevron-right")}</button></div>
       <table class="ano"><tr><th>Mês</th><th>Receitas</th><th>Despesas</th><th>Saldo</th></tr>${linhasAno}
@@ -1108,16 +1092,10 @@ ligar.relatorios = () => {
   document.querySelectorAll("[data-vercat]").forEach((b) => (b.onclick = () => verCategoria(b.dataset.vercat, S.cmp.modo === "mes" ? S.cmp.mes : mesAtual())));
   document.querySelectorAll("[data-cm]").forEach((b) => (b.onclick = () => { S.cmp.mes = b.dataset.cm; S.cmp.modo = "mes"; desenhar(); }));
   document.querySelectorAll("[data-ano]").forEach((b) => (b.onclick = () => { S.relAno += Number(b.dataset.ano); desenhar(); }));
-  document.querySelectorAll("[data-pagar]").forEach((b) => (b.onclick = () => {
-    const cid = b.dataset.pagar, ym = faturaAberta(cid), ant = somaMes(ym, -1);
-    pagarFatura(cid, infoFatura(cid, ant).falta > 0 ? ant : ym);
-  }));
-  document.querySelectorAll("[data-verfat]").forEach((b) => (b.onclick = () => verFaturas(b.dataset.verfat)));
-  const nc = $("[data-novocartao]"); if (nc) nc.onclick = () => editarCartao();
 };
 
-function verFaturas(cid) {
-  let ym = faturaAberta(cid);
+function verFaturas(cid, mesIni) {
+  let ym = mesIni || faturaAberta(cid);
   const el = abrirCamada(`<div data-c></div>`, { aoFechar: () => desenhar() });
   const pintar = () => {
     const f = infoFatura(cid, ym);
@@ -1134,6 +1112,66 @@ function verFaturas(cid) {
   };
   pintar();
   verFaturas.repintar = pintar;
+}
+
+// Folha aberta por "Faturas cartões" no Início: as faturas que vencem no mês exibido
+function abrirFaturasMes(mesIni) {
+  let ym = mesIni;
+  const el = abrirCamada(`<div data-fatmesc></div>`, { aoFechar: () => desenhar() });
+  const pintar = () => {
+    const fs = S.d.cartoes.map((c) => ({ c, f: infoFatura(c.id, ym) }));
+    const total = fs.reduce((t, x) => t + x.f.total, 0), falta = fs.reduce((t, x) => t + x.f.falta, 0);
+    const pago = fs.reduce((t, x) => t + Math.min(x.f.pago, x.f.total), 0);
+    const aberta = (cid) => faturaAberta(cid) === ym;
+    const etq = (x) => x.f.total === 0 ? `<span class="etiqueta">Sem compras</span>` : x.f.falta === 0 ? `<span class="etiqueta paga">Paga</span>`
+      : aberta(x.c.id) ? `<span class="etiqueta aberta">Aberta</span>` : `<span class="etiqueta">Fechada</span>`;
+    $("[data-fatmesc]", el).innerHTML = `<h2>Faturas dos cartões</h2>
+      <div class="ano-nav"><button data-m="-1">${ic("chevron-left")}</button><span>Vencem em ${nomeMes(ym)}</span><button data-m="1">${ic("chevron-right")}</button></div>
+      <div style="text-align:center;font-size:28px;font-weight:700" class="num">${fmtR(total)}</div>
+      <p style="text-align:center;margin:2px 0 12px;font-size:14px;color:#555">${total === 0 ? "Nenhuma compra nessas faturas" : falta === 0 ? "Tudo pago" : pago ? `Pago ${fmtR(pago)} · falta ${fmtR(falta)}` : "Nada pago ainda"}</p>
+      <div class="cartao-box">${fs.map((x) => `<div class="fatura"><div class="cabf"><span class="bola">${ic("credit-card")}</span><div class="meio"><b>${esc(x.c.nome)}</b>
+          <small style="display:block">Fecha dia ${x.c.fechamento} · vence ${dataCurta(vencimentoData(x.c.id, ym))} · ${x.f.itens.length} compra(s)</small></div></div>
+        <div class="valf num">${fmtR(x.f.total)}</div>${etq(x)}${x.f.pago && x.f.falta ? `<small> falta ${fmtR(x.f.falta)}</small>` : ""}
+        <div class="acoes"><button class="btn contorno" data-verfat="${x.c.id}">Ver compras</button>${x.f.falta > 0 ? `<button class="btn preto" data-pagar="${x.c.id}">Pagar fatura</button>` : ""}</div></div>`).join("")}</div>
+      <p style="font-size:12.5px;color:#777;margin:10px 2px 0">Compras no cartão entram em “Despesas do mês” na data da compra, mas só saem do saldo quando você paga a fatura.</p>`;
+    el.querySelectorAll("[data-m]").forEach((b) => (b.onclick = () => { ym = somaMes(ym, Number(b.dataset.m)); pintar(); }));
+    el.querySelectorAll("[data-verfat]").forEach((b) => (b.onclick = () => verFaturas(b.dataset.verfat, ym)));
+    el.querySelectorAll("[data-pagar]").forEach((b) => (b.onclick = () => pagarFatura(b.dataset.pagar, ym)));
+  };
+  pintar();
+  abrirFaturasMes.repintar = pintar;
+}
+
+// Mostra o que entra em "pagas / a pagar" (despesas) ou "recebidas / a receber" (receitas) no Início
+function verConsiderado(tipo, qual, ym) {
+  const el = abrirCamada(`<div data-considc></div>`, { aoFechar: () => desenhar() });
+  const pintar = () => {
+    const hj = hoje(), des = tipo === "despesa", ok = qual === "ok";
+    const lancs = S.d.lancs.filter((l) => l.tipo === tipo && l.data.startsWith(ym) && (ok ? l.data <= hj : l.data > hj))
+      .sort((x, y) => (ok ? y.data.localeCompare(x.data) : x.data.localeCompare(y.data)) || x.id.localeCompare(y.id));
+    const fixos = ok ? [] : fixosPendentes(ym).filter((f) => f.tipo === tipo);
+    const total = lancs.reduce((t, l) => t + l.valor, 0) + fixos.reduce((t, f) => t + f.valor, 0);
+    const noCartao = lancs.filter((l) => l.cartao);
+    const titulo = des ? (ok ? "Despesas pagas" : "Despesas a pagar") : (ok ? "Receitas recebidas" : "Receitas a receber");
+    const regra = ok
+      ? `Lançamentos de ${des ? "despesa" : "receita"} de ${nomeMes(ym)} com data <b>até hoje (${dataCurta(hj)})</b>.${des ? " Inclui compras no cartão: elas contam aqui pela data da compra, mesmo que a fatura ainda não tenha sido paga." : ""}`
+      : `Lançamentos de ${des ? "despesa" : "receita"} de ${nomeMes(ym)} com data <b>depois de hoje (${dataCurta(hj)})</b>${des ? ", como parcelas futuras," : ""} e os <b>fixos ainda não confirmados</b> do mês.`;
+    const secao = (rot, v, html) => html ? `<div class="dia-cab"><span>${rot}</span><span class="num">${fmt(v)}</span></div>${html}` : "";
+    const htmlFixos = fixos.map((f) => { const c = cat(f.cat); return `<div class="item pendente"><button class="pend-abrir" data-fixo="${f.id}">${bola(c.icone, c.cor)}
+        <span class="meio"><div>${esc(f.nota || c.nome)}</div><small>dia ${dataCurta(dataFixo(f, ym))} · ${ic("repeat")}Fixo a confirmar${f.cartao ? " · " + esc(cartao(f.cartao).nome) : ""}</small></span>
+        <span class="val num">${des ? "- " : "+ "}${fmt(f.valor)}</span></button></div>`; }).join("");
+    $("[data-considc]", el).innerHTML = `<h2>${titulo}</h2>
+      <p style="text-align:center;color:#777;margin:-6px 0 4px;font-size:14px">${nomeMes(ym)}</p>
+      <div style="text-align:center;font-size:28px;font-weight:700" class="num">${fmtR(total)}</div>
+      <p class="consid-regra">${regra}${des && ok && noCartao.length ? `<br>Destas, <b>${fmtR(noCartao.reduce((t, l) => t + l.valor, 0))}</b> foram no cartão.` : ""}</p>
+      <div style="margin:0 -18px">${secao("Lançamentos", lancs.reduce((t, l) => t + l.valor, 0), lancs.map((l) => itemLanc(l, true)).join(""))}
+      ${secao("Fixos a confirmar", fixos.reduce((t, f) => t + f.valor, 0), htmlFixos)}
+      ${!lancs.length && !fixos.length ? `<p class="vazio" style="padding:20px">Nada aqui em ${nomeMes(ym)}.</p>` : ""}</div>`;
+    el.querySelectorAll("[data-lanc]").forEach((b) => (b.onclick = () => abrirLanc(b.dataset.lanc)));
+    el.querySelectorAll("[data-fixo]").forEach((b) => (b.onclick = () => abrirEditor(null, { fixo: fixoPorId(b.dataset.fixo), ym })));
+  };
+  pintar();
+  verConsiderado.repintar = pintar;
 }
 
 function pagarFatura(cid, ym, existente) {
@@ -1172,6 +1210,8 @@ function atualizarFundo() {
     if (pilha.length && verFaturas.repintar && document.contains($("[data-c]"))) verFaturas.repintar();
     if (abrirBusca.repintar && $("[data-q]")) abrirBusca.repintar();
     if (verCategoria.repintar && $("[data-detcat]")) verCategoria.repintar();
+    if (abrirFaturasMes.repintar && $("[data-fatmesc]")) abrirFaturasMes.repintar();
+    if (verConsiderado.repintar && $("[data-considc]")) verConsiderado.repintar();
     if (abrirInvestimentos.repintar && $("[data-invtela]")) abrirInvestimentos.repintar();
     if (verInvest.repintar && $(".inv-top")) verInvest.repintar();
     if (gerirContas.repintar && $("[data-contas]")) gerirContas.repintar();

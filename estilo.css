@@ -626,3 +626,7 @@ html[data-contraste="claro"] .resumo .col .sub2 { color: rgba(255,255,255,.85); 
 .ordem-cab { align-items: center; padding-top: 10px; padding-bottom: 10px; }
 .ordem-cab > span:first-child { color: var(--preto); font-weight: 600; }
 .ordem-cab .det-alt button { padding: 5px 10px; font-size: 12.5px; }
+
+/* Início: "pagas / a pagar" clicáveis */
+button.sub2 { background: none; border: 0; padding: 1px 0; font: inherit; cursor: pointer; text-decoration: underline; text-decoration-style: dotted; text-underline-offset: 2px; text-align: left; }
+.consid-regra { font-size: 13px; color: #666; background: var(--fundo-suave, #f6f2ee); border-radius: 10px; padding: 10px 12px; margin: 8px 0 12px; line-height: 1.4; }
