@@ -1,7 +1,7 @@
 "use strict";
 /* Gestor de Finanças — app instalável, dados guardados só no aparelho e criptografados. */
 
-const VERSAO_APP = "3.10";
+const VERSAO_APP = "3.11";
 const $ = (s, el = document) => el.querySelector(s);
 const esc = (t) => String(t ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const ic = (n) => `<svg class="ic" viewBox="0 0 24 24">${ICONES[n] || ICONES["circle-ellipsis"]}</svg>`;
@@ -670,7 +670,10 @@ function telaInicio() {
   const hj = hoje(), pendM = fixosPendentes(S.mes), jaFoi = criarJaFoi(hj);
   const somaL = (tipo, futuro) => S.d.lancs.filter((l) => l.tipo === tipo && l.data.startsWith(S.mes) && (futuro ? !jaFoi(l) : jaFoi(l))).reduce((s, l) => s + l.valor, 0);
   const desPagas = somaL("despesa", false), desAPagar = somaL("despesa", true) + pendM.filter((f) => f.tipo === "despesa").reduce((s, f) => s + f.valor, 0);
-  const recOk = somaL("receita", false), recAReceber = somaL("receita", true) + pendM.filter((f) => f.tipo === "receita").reduce((s, f) => s + f.valor, 0);
+  // investimentos programados para cair na conta também contam como receita a receber / recebida
+  const invRecebido = S.d.lancs.filter((l) => l.tipo === "resg" && l.prog && l.data.startsWith(S.mes)).reduce((s, l) => s + l.valor, 0);
+  const invAReceber = progPendentes(S.mes).reduce((s, x) => s + x.valor, 0);
+  const recOk = somaL("receita", false) + invRecebido, recAReceber = somaL("receita", true) + pendM.filter((f) => f.tipo === "receita").reduce((s, f) => s + f.valor, 0) + invAReceber;
   const linhas2 = (ok, falta, rOk, rFalta) => (ok || falta)
     ? `<button class="sub2" data-consid="${rOk === "pagas" ? "despesa" : "receita"}|ok"><i class="ok"></i>${fmt(ok)} ${rOk}</button><button class="sub2" data-consid="${rOk === "pagas" ? "despesa" : "receita"}|falta"><i class="falta"></i>${fmt(falta)} ${rFalta}</button>` : "";
   return `<header class="topo">
