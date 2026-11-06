@@ -1,7 +1,7 @@
 "use strict";
 /* Gestor de Finanças — app instalável, dados guardados só no aparelho e criptografados. */
 
-const VERSAO_APP = "3.15";
+const VERSAO_APP = "3.16";
 const $ = (s, el = document) => el.querySelector(s);
 const esc = (t) => String(t ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const ic = (n) => `<svg class="ic" viewBox="0 0 24 24">${ICONES[n] || ICONES["circle-ellipsis"]}</svg>`;
@@ -616,6 +616,112 @@ function nav() {
 
 const ligar = {};
 
+/* ----- Gastos x Pagamentos (o mesmo dinheiro visto de dois jeitos, sem contar duas vezes) ----- */
+// Gastos do mês (competência): tudo o que foi comprado/consumido no mês, pela data da compra,
+// no cartão ou à vista, mais os fixos de despesa ainda não confirmados.
+const ehCompraCartao = (l) => !!l.cartao && S.d.cartoes.some((c) => c.id === l.cartao);
+function gastosMes(ym) {
+  const itens = S.d.lancs.filter((l) => l.tipo === "despesa" && l.data.startsWith(ym));
+  const fixos = fixosPendentes(ym).filter((f) => f.tipo === "despesa");
+  const ehC = (x) => (x.cartao && S.d.cartoes.some((c) => c.id === x.cartao));
+  const soma = (a) => a.reduce((t, x) => t + x.valor, 0);
+  const cartao = soma(itens.filter(ehC)) + soma(fixos.filter(ehC));
+  const total = soma(itens) + soma(fixos);
+  return { itens, fixos, total, cartao, vista: total - cartao };
+}
+// Pagamentos do mês (caixa): o que sai das contas no mês. Compras no cartão NÃO entram aqui
+// uma a uma: entram juntas como a fatura que vence neste mês.
+function pagamentosMes(ym, hj = hoje()) {
+  const vista = S.d.lancs.filter((l) => l.tipo === "despesa" && l.data.startsWith(ym) && !ehCompraCartao(l));
+  const vistaOk = vista.filter((l) => l.data <= hj), vistaFalta = vista.filter((l) => l.data > hj);
+  const fixos = fixosPendentes(ym).filter((f) => f.tipo === "despesa" && !(f.cartao && S.d.cartoes.some((c) => c.id === f.cartao)));
+  const faturas = S.d.cartoes.map((c) => {
+    const f = infoFatura(c.id, ym);
+    const pago = S.d.lancs.filter((l) => l.tipo === "fatura" && l.cartao === c.id && l.fatura === ym).reduce((t, l) => t + l.valor, 0);
+    return { c, f, pago, falta: f.falta };
+  }).filter((x) => x.f.total || x.pago);
+  const soma = (a) => a.reduce((t, x) => t + x.valor, 0);
+  const fatPago = faturas.reduce((t, x) => t + x.pago, 0), fatFalta = faturas.reduce((t, x) => t + x.falta, 0);
+  const pago = soma(vistaOk) + fatPago, falta = soma(vistaFalta) + soma(fixos) + fatFalta;
+  return { vistaOk, vistaFalta, fixos, faturas, fatPago, fatFalta, pago, falta, total: pago + falta };
+}
+// Receitas do mês: recebidas (até hoje) e a receber (datas futuras, fixos e parcelas de investimentos)
+function receitasMes(ym, hj = hoje()) {
+  const rec = S.d.lancs.filter((l) => l.tipo === "receita" && l.data.startsWith(ym));
+  const inv = S.d.lancs.filter((l) => l.tipo === "resg" && l.prog && l.data.startsWith(ym)).reduce((t, l) => t + l.valor, 0);
+  const ok = rec.filter((l) => l.data <= hj).reduce((t, l) => t + l.valor, 0) + inv;
+  const falta = rec.filter((l) => l.data > hj).reduce((t, l) => t + l.valor, 0)
+    + fixosPendentes(ym).filter((f) => f.tipo === "receita").reduce((t, f) => t + f.valor, 0)
+    + progAReceber(ym).reduce((t, x) => t + x.valor, 0);
+  return { ok, falta, total: ok + falta };
+}
+
+// Folha: o que foi gasto no mês (por data da compra)
+function verGastos(ym, filtroIni) {
+  let filtro = filtroIni || "todos";
+  const el = abrirCamada(`<div data-gastosc></div>`, { aoFechar: () => desenhar() });
+  const pintar = () => {
+    const g = gastosMes(ym);
+    const ehC = (x) => x.cartao && S.d.cartoes.some((c) => c.id === x.cartao);
+    const passa = (x) => filtro === "todos" || (filtro === "cartao" ? ehC(x) : !ehC(x));
+    const itens = g.itens.filter(passa).sort((x, y) => y.data.localeCompare(x.data) || y.id.localeCompare(x.id));
+    const fixos = g.fixos.filter(passa);
+    const total = filtro === "todos" ? g.total : filtro === "cartao" ? g.cartao : g.vista;
+    const htmlFixos = fixos.map((f) => { const c = cat(f.cat); return `<div class="item pendente"><button class="pend-abrir" data-fixo="${f.id}">${bola(c.icone, c.cor)}
+        <span class="meio"><div>${esc(f.nota || c.nome)}</div><small>dia ${dataCurta(dataFixo(f, ym))} · ${ic("repeat")}Fixo a confirmar${f.cartao ? " · " + esc(cartao(f.cartao).nome) : ""}</small></span>
+        <span class="val num">- ${fmt(f.valor)}</span></button></div>`; }).join("");
+    const secao = (rot, v, html) => html ? `<div class="dia-cab"><span>${rot}</span><span class="num">${fmt(v)}</span></div>${html}` : "";
+    $("[data-gastosc]", el).innerHTML = `<h2>Gastos de ${nomeMes(ym)}</h2>
+      <div class="alternar tres filtro3"><button data-fg="todos" class="${filtro === "todos" ? "ativo" : ""}">Tudo</button><button data-fg="cartao" class="${filtro === "cartao" ? "ativo" : ""}">No cartão</button><button data-fg="vista" class="${filtro === "vista" ? "ativo" : ""}">À vista</button></div>
+      <div style="text-align:center;font-size:28px;font-weight:700;margin-top:10px" class="num">${fmtR(total)}</div>
+      <p class="consid-regra">Tudo o que você <b>comprou ou consumiu</b> em ${nomeMes(ym)}, pela data da compra. É o seu gasto real do mês.
+        Compras no cartão aparecem aqui <b>uma vez só</b>; o dinheiro delas sai da conta quando a fatura é paga, e isso aparece em <b>Pagamentos</b> do mês da fatura.</p>
+      <div style="margin:0 -18px">${secao("Lançamentos", itens.reduce((t, l) => t + l.valor, 0), itens.map((l) => itemLanc(l, true)).join(""))}
+        ${secao("Fixos a confirmar", fixos.reduce((t, f) => t + f.valor, 0), htmlFixos)}
+        ${!itens.length && !fixos.length ? `<p class="vazio" style="padding:20px">Nada aqui em ${nomeMes(ym)}.</p>` : ""}</div>`;
+    el.querySelectorAll("[data-fg]").forEach((b) => (b.onclick = () => { filtro = b.dataset.fg; pintar(); }));
+    el.querySelectorAll("[data-lanc]").forEach((b) => (b.onclick = () => abrirLanc(b.dataset.lanc)));
+    el.querySelectorAll("[data-fixo]").forEach((b) => (b.onclick = () => abrirEditor(null, { fixo: fixoPorId(b.dataset.fixo), ym })));
+  };
+  pintar();
+  verGastos.repintar = pintar;
+}
+
+// Folha: o que sai das contas no mês (faturas que vencem + despesas à vista + fixos)
+function verPagamentos(ym, qualIni) {
+  let qual = qualIni || "falta";
+  const el = abrirCamada(`<div data-pagc></div>`, { aoFechar: () => desenhar() });
+  const pintar = () => {
+    const p = pagamentosMes(ym), ok = qual === "ok";
+    const fats = p.faturas.filter((x) => ok ? x.pago > 0 : x.falta > 0);
+    const vista = ok ? p.vistaOk : p.vistaFalta;
+    const fixos = ok ? [] : p.fixos;
+    const soma = (a) => a.reduce((t, x) => t + x.valor, 0);
+    const htmlFat = fats.map((x) => `<button class="item fat-linha" data-verfat="${x.c.id}">${bola("credit-card")}
+        <span class="meio"><div>Fatura ${esc(x.c.nome)}</div><small>vence ${dataCurta(vencimentoData(x.c.id, ym))} · ${x.f.itens.length} compra(s) · total ${fmt(x.f.total)}${ok && x.falta ? ` · falta ${fmt(x.falta)}` : !ok && x.pago ? ` · já pago ${fmt(x.pago)}` : ""}</small></span>
+        <span class="val num">- ${fmt(ok ? x.pago : x.falta)}</span></button>`).join("");
+    const htmlFixos = fixos.map((f) => { const c = cat(f.cat); return `<div class="item pendente"><button class="pend-abrir" data-fixo="${f.id}">${bola(c.icone, c.cor)}
+        <span class="meio"><div>${esc(f.nota || c.nome)}</div><small>dia ${dataCurta(dataFixo(f, ym))} · ${ic("repeat")}Fixo a confirmar</small></span>
+        <span class="val num">- ${fmt(f.valor)}</span></button></div>`; }).join("");
+    const secao = (rot, v, html) => html ? `<div class="dia-cab"><span>${rot}</span><span class="num">${fmt(v)}</span></div>${html}` : "";
+    const fv = fats.reduce((t, x) => t + (ok ? x.pago : x.falta), 0);
+    $("[data-pagc]", el).innerHTML = `<h2>Pagamentos de ${nomeMes(ym)}</h2>
+      <div class="alternar filtro3"><button data-fp="ok" class="${ok ? "ativo" : ""}">Pagos ${fmt(p.pago)}</button><button data-fp="falta" class="${ok ? "" : "ativo"}">A pagar ${fmt(p.falta)}</button></div>
+      <div style="text-align:center;font-size:28px;font-weight:700;margin-top:10px" class="num">${fmtR(ok ? p.pago : p.falta)}</div>
+      <p class="consid-regra">O dinheiro que <b>sai das suas contas</b> em ${nomeMes(ym)}: as <b>faturas que vencem</b> no mês (com compras de meses anteriores), as despesas à vista e os fixos fora do cartão. As compras no cartão não entram aqui uma a uma, só pela fatura — por isso nada é contado duas vezes.</p>
+      <div style="margin:0 -18px">${secao(`Faturas que vencem em ${nomeMes(ym)}`, fv, htmlFat)}
+        ${secao("Despesas à vista", soma(vista), [...vista].sort((x, y) => (ok ? y.data.localeCompare(x.data) : x.data.localeCompare(y.data))).map((l) => itemLanc(l, true)).join(""))}
+        ${secao("Fixos a confirmar", soma(fixos), htmlFixos)}
+        ${!fats.length && !vista.length && !fixos.length ? `<p class="vazio" style="padding:20px">${ok ? "Nada pago" : "Nada a pagar"} em ${nomeMes(ym)}.</p>` : ""}</div>`;
+    el.querySelectorAll("[data-fp]").forEach((b) => (b.onclick = () => { qual = b.dataset.fp; pintar(); }));
+    el.querySelectorAll("[data-verfat]").forEach((b) => (b.onclick = () => verFaturas(b.dataset.verfat, ym)));
+    el.querySelectorAll("[data-lanc]").forEach((b) => (b.onclick = () => abrirLanc(b.dataset.lanc)));
+    el.querySelectorAll("[data-fixo]").forEach((b) => (b.onclick = () => abrirEditor(null, { fixo: fixoPorId(b.dataset.fixo), ym })));
+  };
+  pintar();
+  verPagamentos.repintar = pintar;
+}
+
 /* ----- Início ----- */
 function telaInicio() {
   const t = totaisMes(S.mes);
@@ -672,24 +778,23 @@ function telaInicio() {
   // faturas do mês: só o que ainda falta pagar (fatura paga sai daqui)
   const fatTot = S.d.cartoes.reduce((s, c) => s + infoFatura(c.id, S.mes).total, 0);
   const fatMes = S.d.cartoes.reduce((s, c) => s + infoFatura(c.id, S.mes).falta, 0);
-  // despesas e receitas do mês: o que já aconteceu + o que ainda vai acontecer (datas futuras e fixos não confirmados)
-  const hj = hoje(), pendM = fixosPendentes(S.mes), jaFoi = criarJaFoi(hj);
-  const somaL = (tipo, futuro) => S.d.lancs.filter((l) => l.tipo === tipo && l.data.startsWith(S.mes) && (futuro ? !jaFoi(l) : jaFoi(l))).reduce((s, l) => s + l.valor, 0);
-  const desPagas = somaL("despesa", false), desAPagar = somaL("despesa", true) + pendM.filter((f) => f.tipo === "despesa").reduce((s, f) => s + f.valor, 0);
-  // investimentos programados para cair na conta também contam como receita a receber / recebida
-  const invRecebido = S.d.lancs.filter((l) => l.tipo === "resg" && l.prog && l.data.startsWith(S.mes)).reduce((s, l) => s + l.valor, 0);
-  const invAReceber = progAReceber(S.mes).reduce((s, x) => s + x.valor, 0);
-  const recOk = somaL("receita", false) + invRecebido, recAReceber = somaL("receita", true) + pendM.filter((f) => f.tipo === "receita").reduce((s, f) => s + f.valor, 0) + invAReceber;
-  const linhas2 = (ok, falta, rOk, rFalta) => (ok || falta)
-    ? `<button class="sub2" data-consid="${rOk === "pagas" ? "despesa" : "receita"}|ok"><i class="ok"></i>${fmt(ok)} ${rOk}</button><button class="sub2" data-consid="${rOk === "pagas" ? "despesa" : "receita"}|falta"><i class="falta"></i>${fmt(falta)} ${rFalta}</button>` : "";
+  // Três visões do mês, sem contar nada duas vezes:
+  // Gastos = o que comprou (data da compra) · Pagamentos = o que sai da conta (faturas que vencem + à vista) · Receitas
+  const g = gastosMes(S.mes), p = pagamentosMes(S.mes), r = receitasMes(S.mes);
+  const sub = (attr, cls, v, rot) => `<button class="sub2" ${attr}><i class="${cls}"></i>${fmt(v)} ${rot}</button>`;
   return `<header class="topo">
       <div class="topo-linha"><h1>Gestor de Finanças</h1><button class="bt-busca" data-busca aria-label="Buscar">${ic("search")}</button></div>
       <button class="hero" data-aba="relatorios"><span class="hero-t">${ic("wallet")}Saldo em conta <small>hoje</small></span>
         <b class="num ${saldoReal < 0 ? "neg" : ""}">${fmtR(saldoReal)}</b></button>
-      <div class="resumo dois">
-        <button class="sel-mes" data-mes><small>${a}</small><b>${MES3[m - 1]} ▾</b></button>
-        <div class="col"><span>Despesas do mês</span><b class="num">${fmt(desPagas + desAPagar)}</b>${linhas2(desPagas, desAPagar, "pagas", "a pagar")}</div>
-        <div class="col"><span>Receitas do mês</span><b class="num">${fmt(recOk + recAReceber)}</b>${linhas2(recOk, recAReceber, "recebidas", "a receber")}</div>
+      <div class="mes-linha"><button data-mesnav="-1" aria-label="Mês anterior">${ic("chevron-left")}</button>
+        <button class="mes-nome" data-mes>${MESES[m - 1]} ${a} ▾</button><button data-mesnav="1" aria-label="Próximo mês">${ic("chevron-right")}</button></div>
+      <div class="resumo tres">
+        <div class="col"><button class="col-t" data-vg="todos">Gastos</button><b class="num">${fmt(g.total)}</b>
+          ${g.total ? sub('data-vg="cartao"', "cart", g.cartao, "cartão") + sub('data-vg="vista"', "vist", g.vista, "à vista") : ""}</div>
+        <div class="col"><button class="col-t" data-vp="falta">Pagamentos</button><b class="num">${fmt(p.total)}</b>
+          ${p.total ? sub('data-vp="ok"', "ok", p.pago, "pagos") + sub('data-vp="falta"', "falta", p.falta, "a pagar") : ""}</div>
+        <div class="col"><button class="col-t" data-consid="receita|ok">Receitas</button><b class="num">${fmt(r.total)}</b>
+          ${r.total ? sub('data-consid="receita|ok"', "ok", r.ok, "recebido") + sub('data-consid="receita|falta"', "falta", r.falta, "a receber") : ""}</div>
       </div>
       <div class="mini">
         ${S.d.contas.some(ehBenef) ? `<button class="faixa-it" data-aba="relatorios"><span>${ic("ticket")}Benefícios</span><b class="num">${fmtR(S.d.contas.filter(ehBenef).reduce((t, c) => t + saldoConta(c.id), 0))}</b></button>` : ""}
@@ -853,6 +958,9 @@ ligar.inicio = () => {
   const ai = $("[data-abririnv]"); if (ai) ai.onclick = abrirInvestimentos;
   const fm = $("[data-fatmes]"); if (fm) fm.onclick = () => abrirFaturasMes(S.mes);
   document.querySelectorAll("[data-consid]").forEach((b) => (b.onclick = () => { const [t, q] = b.dataset.consid.split("|"); verConsiderado(t, q, S.mes); }));
+  document.querySelectorAll("[data-vg]").forEach((b) => (b.onclick = () => verGastos(S.mes, b.dataset.vg)));
+  document.querySelectorAll("[data-vp]").forEach((b) => (b.onclick = () => verPagamentos(S.mes, b.dataset.vp)));
+  document.querySelectorAll("[data-mesnav]").forEach((b) => (b.onclick = () => { S.mes = somaMes(S.mes, Number(b.dataset.mesnav)); desenhar(); }));
   $("#lista").onclick = (e) => {
     const oi = e.target.closest("[data-ordini]");
     if (oi) { try { localStorage.setItem("gf_ordem_inicio", oi.dataset.ordini); } catch {} return desenhar(); }
@@ -991,121 +1099,132 @@ function verCategoria(cid, ymIni) {
   verCategoria.repintar = pintar;
 }
 
-/* ----- Comparativo receitas x despesas ----- */
-function dadosPeriodo(filtro) {
-  let rec = 0, des = 0; const pc = { receita: {}, despesa: {} };
-  for (const l of S.d.lancs) {
-    if ((l.tipo !== "receita" && l.tipo !== "despesa") || !filtro(l.data)) continue;
-    if (l.tipo === "receita") rec += l.valor; else des += l.valor;
-    pc[l.tipo][l.cat] = (pc[l.tipo][l.cat] || 0) + l.valor;
-  }
-  const ord = (o) => Object.entries(o).sort((a, b) => b[1] - a[1]).map(([id, v]) => ({ id, v }));
-  const lr = ord(pc.receita), ld = ord(pc.despesa);
-  return { rec, des, topRec: lr[0] || null, topDes: ld[0] || null, listaRec: lr, listaDes: ld };
+/* ----- Relatórios: abas (Mês · Ano · Contas · Cartões · Investimentos), passando o dedo para o lado ----- */
+const ABAS_REL = [["mes", "Mês", "calendar"], ["ano", "Ano", "chart-line"], ["contas", "Contas", "wallet"], ["cartoes", "Cartões", "credit-card"], ["invest", "Investimentos", "piggy-bank"]];
+
+// gastos por categoria no mês (pela data da compra)
+function gastosPorCat(ym) {
+  const o = {};
+  for (const l of S.d.lancs) if (l.tipo === "despesa" && l.data.startsWith(ym)) o[l.cat] = (o[l.cat] || 0) + l.valor;
+  return Object.entries(o).sort((a, b) => b[1] - a[1]).map(([id, v]) => ({ id, v }));
 }
 
-// Lista pequena com a porcentagem de cada categoria
-function listaPct(lista, total, cls) {
-  if (!lista.length) return `<div class="pct-col"></div>`;
-  const max = lista[0].v;
-  return `<div class="pct-col">${lista.map((x) => {
-    const k = cat(x.id), p = total ? (x.v / total) * 100 : 0;
-    return `<div class="pct-l" data-vercat="${x.id}"><div class="pct-t"><span>${esc(k.nome)}</span><b class="num">${p < 1 && p > 0 ? "<1" : Math.round(p)}%</b></div>
-      <div class="pct-b"><i class="${cls}" style="width:${(x.v / max) * 100}%${k.cor ? `;background:${k.cor}` : ""}"></i></div></div>`;
-  }).join("")}</div>`;
+function relMes() {
+  const ym = S.cmp.mes, g = gastosMes(ym), p = pagamentosMes(ym), r = receitasMes(ym);
+  const sobraG = r.total - g.total, sobraP = r.total - p.total;
+  const cats = gastosPorCat(ym), totCat = cats.reduce((t, x) => t + x.v, 0), maxC = cats.length ? cats[0].v : 1;
+  const meses = Array.from({ length: 6 }, (_, i) => somaMes(ym, i - 5));
+  const serie = meses.map((m) => ({ m, g: gastosMes(m).total, p: pagamentosMes(m).total, r: receitasMes(m).total }));
+  const mx = Math.max(1, ...serie.map((x) => Math.max(x.g, x.p, x.r)));
+  const linhaRes = (rot, v, expl) => `<div class="res-l"><span>${rot}<small>${expl}</small></span><b class="num ${v < 0 ? "neg" : "pos"}">${v < 0 ? "− " : "+ "}${fmt(Math.abs(v))}</b></div>`;
+  return `<div class="rel-nav"><button data-rm="-1">${ic("chevron-left")}</button><span>${MESES[Number(ym.slice(5)) - 1]} ${ym.slice(0, 4)}</span><button data-rm="1">${ic("chevron-right")}</button></div>
+    <div class="kpis">
+      <button class="kpi" data-vg="todos"><small>Gastos</small><b class="num">${fmt(g.total)}</b><span>comprado no mês</span></button>
+      <button class="kpi" data-vp="falta"><small>Pagamentos</small><b class="num">${fmt(p.total)}</b><span>sai da conta</span></button>
+      <button class="kpi" data-consid="receita|ok"><small>Receitas</small><b class="num">${fmt(r.total)}</b><span>${r.falta ? `${fmt(r.falta)} a receber` : "tudo recebido"}</span></button>
+    </div>
+    <div class="cartao-box res-box">
+      ${linhaRes("Receitas − gastos", sobraG, sobraG >= 0 ? "você gastou menos do que ganhou" : "você gastou mais do que ganhou")}
+      ${linhaRes("Receitas − pagamentos", sobraP, "o que sobra na conta no mês")}
+    </div>
+    <div class="cartao-box mb-box"><div class="mini-barras">${serie.map((x) => `<button class="mb-col ${x.m === ym ? "sel" : ""}" data-cm="${x.m}">
+        <span class="mb-par"><i class="r" style="height:${(x.r / mx) * 100}%"></i><i class="d" style="height:${(x.g / mx) * 100}%"></i><i class="p" style="height:${(x.p / mx) * 100}%"></i></span>
+        <small>${MES3[Number(x.m.slice(5)) - 1].replace(".", "")}</small></button>`).join("")}</div>
+      <div class="mb-leg"><span><i class="r"></i>Receitas</span><span><i class="d"></i>Gastos</span><span><i class="p"></i>Pagamentos</span></div></div>
+    <h3 class="rel-h3">Onde mais gastou</h3>
+    <div class="cartao-box cats-box">${cats.length ? cats.map((x) => { const k = cat(x.id), pc = totCat ? (x.v / totCat) * 100 : 0;
+      return `<button class="cat-mini" data-vercat="${x.id}">${bola(k.icone, k.cor)}<span class="cm-meio"><span class="cm-t"><span>${esc(k.nome)}</span><b class="num">${fmt(x.v)}</b></span>
+        <span class="cm-b"><i style="width:${(x.v / maxC) * 100}%${k.cor ? `;background:${k.cor}` : ""}"></i><small>${pc < 1 && pc > 0 ? "<1" : Math.round(pc)}%</small></span></span></button>`; }).join("")
+      : `<p class="vazio" style="padding:18px">Nenhum gasto em ${nomeMes(ym)}.</p>`}</div>`;
 }
 
-function blocoComparativo() {
-  const c = S.cmp, mes = c.modo === "mes";
-  const pref = mes ? c.mes : String(c.ano);
-  const d = dadosPeriodo((dt) => dt.startsWith(pref));
-  const titulo = mes ? `${MESES[Number(c.mes.slice(5)) - 1]} ${c.mes.slice(0, 4)}` : String(c.ano);
-  const max = Math.max(d.rec, d.des, 1);
-  const pct = (a, b) => (b ? Math.round((a / b) * 100) : 0);
-  const dif = d.rec - d.des;
-
-  let resultado = "";
-  if (d.rec || d.des) {
-    resultado = dif >= 0
-      ? `<div class="cmp-res">Sobrou <b class="num">${fmtR(dif)}</b>${d.rec ? ` · ${pct(dif, d.rec)}% da receita` : ""}</div>`
-      : `<div class="cmp-res neg">Gastou <b class="num">${fmtR(-dif)}</b> a mais do que recebeu</div>`;
-  }
-
-  const pesa = (rot, top, total, extra) => {
-    if (!top) return `<div class="pesa vazio-p"><small>${rot}</small><span>Nenhum lançamento</span></div>`;
-    const k = cat(top.id);
-    return `<div class="pesa"><small>${rot}</small><div class="pesa-l">${bola(k.icone, k.cor)}<b>${esc(k.nome)}</b></div>
-      <div class="pesa-v"><span class="num">${fmt(top.v)}</span><strong class="num">${pct(top.v, total)}%</strong></div>
-      ${extra ? `<p>${extra}</p>` : ""}</div>`;
-  };
-  const extraDes = d.topDes && d.rec ? `Sozinha, consome <b>${pct(d.topDes.v, d.rec)}%</b> da sua receita.` : "";
-  const extraRec = d.topRec ? `É <b>${pct(d.topRec.v, d.rec)}%</b> de tudo que entrou.` : "";
-
-  // mini gráfico: 6 meses até o mês escolhido, ou os 12 meses do ano
-  const meses = mes ? Array.from({ length: 6 }, (_, i) => somaMes(c.mes, i - 5)) : Array.from({ length: 12 }, (_, i) => `${c.ano}-${p2(i + 1)}`);
-  const serie = meses.map((ym) => ({ ym, ...dadosPeriodo((dt) => dt.startsWith(ym)) }));
-  const mx = Math.max(1, ...serie.map((x) => Math.max(x.rec, x.des)));
-  const barras = serie.map((x) => `<button class="mb-col ${mes && x.ym === c.mes ? "sel" : ""}" data-cm="${x.ym}" title="${nomeMes(x.ym)}">
-      <span class="mb-par"><i class="r" style="height:${(x.rec / mx) * 100}%"></i><i class="d" style="height:${(x.des / mx) * 100}%"></i></span>
-      <small>${MES3[Number(x.ym.slice(5)) - 1].replace(".", "")}</small></button>`).join("");
-
-  return `<section class="secao"><h2>Receitas x Despesas</h2><div class="cartao-box cmp">
-    <div class="alternar" style="margin:14px auto 0;max-width:220px"><button data-cmodo="mes" class="${mes ? "ativo" : ""}">Mês</button><button data-cmodo="ano" class="${mes ? "" : "ativo"}">Ano</button></div>
-    <div class="ano-nav"><button data-cnav="-1">${ic("chevron-left")}</button><span style="text-transform:capitalize">${titulo}</span><button data-cnav="1">${ic("chevron-right")}</button></div>
-    <div class="cmp-barras">
-      <div class="cmp-l"><span>Receitas</span><div class="cmp-trilho"><i class="r" style="width:${(d.rec / max) * 100}%"></i></div><b class="num">${fmt(d.rec)}</b></div>
-      <div class="cmp-l"><span>Despesas</span><div class="cmp-trilho"><i class="d" style="width:${(d.des / max) * 100}%"></i></div><b class="num">${fmt(d.des)}</b></div>
-    </div>${resultado}
-    <div class="pesa-grade">${pesa("Despesa que mais pesa", d.topDes, d.des, extraDes)}${pesa("Receita que mais pesa", d.topRec, d.rec, extraRec)}</div>
-    <div class="pct-grade">${listaPct(d.listaDes, d.des, "d")}${listaPct(d.listaRec, d.rec, "r")}</div>
-    <div class="mini-barras">${barras}</div>
-    <div class="mb-leg"><span><i class="r"></i>Receitas</span><span><i class="d"></i>Despesas</span></div>
-  </div></section>`;
+function relAno() {
+  const ano = S.relAno;
+  let tR = 0, tG = 0, tP = 0;
+  let comeca = false;
+  const linhas = MESES.map((m, i) => {
+    const ym = `${ano}-${p2(i + 1)}`, g = gastosMes(ym).total, p = pagamentosMes(ym).total, r = receitasMes(ym).total;
+    tR += r; tG += g; tP += p;
+    if (!comeca && !g && !p && !r && ym < mesAtual()) return ""; // esconde os meses vazios do começo do ano
+    comeca = true;
+    return `<tr class="${ym === mesAtual() ? "atual" : ""}" data-cm="${ym}"><td>${m.slice(0, 3)}</td><td class="num">${r ? fmt(r) : "—"}</td><td class="num">${g ? fmt(g) : "—"}</td><td class="num">${p ? fmt(p) : "—"}</td></tr>`;
+  }).join("");
+  return `<div class="rel-nav"><button data-ano="-1">${ic("chevron-left")}</button><span>${ano}</span><button data-ano="1">${ic("chevron-right")}</button></div>
+    <div class="kpis">
+      <div class="kpi"><small>Receitas</small><b class="num">${fmt(tR)}</b></div>
+      <div class="kpi"><small>Gastos</small><b class="num">${fmt(tG)}</b></div>
+      <div class="kpi"><small>Pagamentos</small><b class="num">${fmt(tP)}</b></div>
+    </div>
+    <div class="cartao-box"><table class="ano ano4"><tr><th>Mês</th><th>Receitas</th><th>Gastos</th><th>Pagos</th></tr>${linhas}
+      <tr class="tot"><td>Total</td><td class="num">${fmt(tR)}</td><td class="num">${fmt(tG)}</td><td class="num">${fmt(tP)}</td></tr></table></div>
+    <p class="rel-nota"><b>Gastos</b>: o que você comprou no mês (pela data da compra). <b>Pagos</b>: o que saiu da conta no mês (faturas que venceram + despesas à vista). Toque num mês para ver os detalhes.</p>`;
 }
 
-/* ----- Relatórios ----- */
-function telaRelatorios() {
+function relContas() {
   const linhaConta = (c) => `<div class="linha-opc"><span class="bola">${ic(icConta(c))}</span><span class="meio">${esc(c.nome)}${ehBenef(c) ? "<small>Cartão de benefício</small>" : ""}</span><b class="num">${fmtR(saldoConta(c.id))}</b></div>`;
   const normais = S.d.contas.filter((c) => !ehBenef(c)), benefs = S.d.contas.filter(ehBenef);
-  const contas = normais.map(linhaConta).join("") + (benefs.length
-    ? `<div class="total-linha"><span>Total em conta</span><span class="num">${fmtR(normais.reduce((s, c) => s + saldoConta(c.id), 0))}</span></div>` + benefs.map(linhaConta).join("")
-      + `<div class="total-linha"><span>Total em benefícios</span><span class="num">${fmtR(benefs.reduce((s, c) => s + saldoConta(c.id), 0))}</span></div>` : "");
-  const totalContas = benefs.length ? null : S.d.contas.reduce((s, c) => s + saldoConta(c.id), 0);
+  const tot = (a) => a.reduce((s, c) => s + saldoConta(c.id), 0);
+  return `<div class="cartao-box">${normais.map(linhaConta).join("")}<div class="total-linha"><span>Total em conta</span><span class="num">${fmtR(tot(normais))}</span></div></div>
+    ${benefs.length ? `<h3 class="rel-h3">Benefícios</h3><div class="cartao-box">${benefs.map(linhaConta).join("")}<div class="total-linha"><span>Total em benefícios</span><span class="num">${fmtR(tot(benefs))}</span></div></div>` : ""}
+    ${S.d.invest.length ? `<div class="cartao-box" style="margin-top:12px"><div class="linha-opc"><span class="bola">${ic("trending-up")}</span><span class="meio">Patrimônio total<small>Contas + investimentos</small></span><b class="num">${fmtR(patrimonio())}</b></div></div>` : ""}`;
+}
 
-  const ano = S.relAno;
-  let tR = 0, tD = 0, tS = 0;
-  const linhasAno = MESES.map((m, i) => {
-    const ym = `${ano}-${p2(i + 1)}`, t = totaisMes(ym);
-    tR += t.rec; tD += t.des; tS += t.saldo;
-    return `<tr class="${ym === mesAtual() ? "atual" : ""}"><td>${m.slice(0, 3)}</td><td class="num">${fmt(t.rec)}</td><td class="num">${fmt(t.des)}</td><td class="num">${fmt(t.saldo)}</td></tr>`;
-  }).join("");
+function relCartoes() {
+  if (!S.d.cartoes.length) return `<p class="vazio">${ic("credit-card")}Nenhum cartão de crédito cadastrado.<br>Cadastre em Perfil → Cartões.</p>`;
+  const ym = S.cmp.mes;
+  const fs = S.d.cartoes.map((c) => ({ c, f: infoFatura(c.id, ym) }));
+  const etq = (f) => f.total === 0 ? `<span class="etiqueta">Sem compras</span>` : f.falta === 0 ? `<span class="etiqueta paga">Paga</span>` : `<span class="etiqueta">Falta ${fmt(f.falta)}</span>`;
+  return `<div class="rel-nav"><button data-rm="-1">${ic("chevron-left")}</button><span class="sem-cap">Faturas que vencem em ${MES3[Number(ym.slice(5)) - 1].replace(".", "")}/${ym.slice(2, 4)}</span><button data-rm="1">${ic("chevron-right")}</button></div>
+    <div class="cartao-box">${fs.map((x) => `<button class="linha-opc" data-verfat="${x.c.id}"><span class="bola">${ic("credit-card")}</span>
+      <span class="meio">${esc(x.c.nome)}<small>vence ${dataCurta(vencimentoData(x.c.id, ym))} · ${x.f.itens.length} compra(s)</small></span>
+      <span class="fat-dir"><b class="num">${fmtR(x.f.total)}</b>${etq(x.f)}</span></button>`).join("")}
+      <div class="total-linha"><span>Total das faturas</span><span class="num">${fmtR(fs.reduce((t, x) => t + x.f.total, 0))}</span></div></div>
+    <button class="btn contorno" style="margin-top:10px" data-fatmes>Pagar ou ver faturas</button>
+    ${usoCartaoMensal(ym)}`;
+}
 
-  return `<header class="cab"><h1>Relatórios</h1></header><div class="conteudo">${blocoComparativo()}
-    <section class="secao"><h2>Saldo das contas</h2><div class="cartao-box">${contas}
-      ${totalContas === null ? "" : `<div class="total-linha"><span>Total</span><span class="num">${fmtR(totalContas)}</span></div>`}</div></section>
-    <section class="secao"><h2>Investimentos e patrimônio</h2><div class="cartao-box">${S.d.invest.length
-      ? `<div class="linha-opc"><span class="bola">${ic("trending-up")}</span><span class="meio">Patrimônio total<small>Contas + investimentos</small></span><b class="num">${fmtR(patrimonio())}</b></div>
-         <div class="linha-opc"><span class="bola">${ic("piggy-bank")}</span><span class="meio">Investido<small>Rendeu ${sinalR(movsPeriodo(mesAtual().slice(0, 4)).rend)} em ${mesAtual().slice(0, 4)}</small></span><b class="num">${fmtR(totalInvestido())}</b></div>
-         <button class="linha-opc" data-abririnv><span class="bola">${ic("chart-line")}</span><span class="meio">Ver investimentos<small>Evolução, metas e onde está seu dinheiro</small></span><span class="seta">${ic("chevron-right")}</span></button>`
-      : `<button class="linha-opc" data-abririnv><span class="bola">${ic("plus")}</span><span class="meio">Começar a acompanhar investimentos<small>Aplicações não contam como despesa. Veja seu patrimônio crescer.</small></span></button>`}</div></section>
-    <section class="secao"><h2>Resumo do ano</h2><div class="cartao-box">
-      <div class="ano-nav"><button data-ano="-1">${ic("chevron-left")}</button><span>${ano}</span><button data-ano="1">${ic("chevron-right")}</button></div>
-      <table class="ano"><tr><th>Mês</th><th>Receitas</th><th>Despesas</th><th>Saldo</th></tr>${linhasAno}
-      <tr class="tot"><td>Total</td><td class="num">${fmt(tR)}</td><td class="num">${fmt(tD)}</td><td class="num">${fmt(tS)}</td></tr></table></div>
-      <p style="font-size:12.5px;color:#777;margin:10px 2px 0">Saldo = receitas − despesas pagas com saldo − pagamentos de fatura. Compras no cartão entram em “Despesas”, mas só saem do saldo quando a fatura é paga.</p></section>
-    </div>`;
+function relInvest() {
+  return `<div class="cartao-box">${S.d.invest.length
+    ? `<div class="linha-opc"><span class="bola">${ic("trending-up")}</span><span class="meio">Patrimônio total<small>Contas + investimentos</small></span><b class="num">${fmtR(patrimonio())}</b></div>
+       <div class="linha-opc"><span class="bola">${ic("piggy-bank")}</span><span class="meio">Investido<small>Rendeu ${sinalR(movsPeriodo(mesAtual().slice(0, 4)).rend)} em ${mesAtual().slice(0, 4)}</small></span><b class="num">${fmtR(totalInvestido())}</b></div>
+       <button class="linha-opc" data-abririnv><span class="bola">${ic("chart-line")}</span><span class="meio">Ver investimentos<small>Evolução, metas e onde está seu dinheiro</small></span><span class="seta">${ic("chevron-right")}</span></button>`
+    : `<button class="linha-opc" data-abririnv><span class="bola">${ic("plus")}</span><span class="meio">Começar a acompanhar investimentos<small>Aplicações não contam como despesa. Veja seu patrimônio crescer.</small></span></button>`}</div>`;
+}
+
+function telaRelatorios() {
+  const aba = S.relAba || "mes";
+  const corpo = { mes: relMes, ano: relAno, contas: relContas, cartoes: relCartoes, invest: relInvest }[aba]();
+  return `<header class="cab rel-cab"><h1>Relatórios</h1>
+      <div class="rel-abas" id="relabas">${ABAS_REL.map(([k, rot, ico]) => `<button data-rel="${k}" class="${k === aba ? "ativo" : ""}">${ic(ico)}${rot}</button>`).join("")}</div></header>
+    <div class="conteudo rel-corpo" id="relcorpo"><div class="rel-pane">${corpo}</div>
+      <p class="rel-dica">${ic("arrow-left-right")}Passe o dedo para o lado para trocar de relatório</p></div>`;
 }
 ligar.relatorios = () => {
+  const ir = (k) => { S.relAba = k; desenhar(); };
+  document.querySelectorAll("[data-rel]").forEach((b) => (b.onclick = () => ir(b.dataset.rel)));
+  const abas = $("#relabas"), at = $("#relabas .ativo");
+  if (abas && at) abas.scrollLeft = at.offsetLeft - abas.clientWidth / 2 + at.clientWidth / 2;
+  // passar o dedo para o lado troca de aba
+  const corpo = $("#relcorpo");
+  let x0 = null, y0 = 0;
+  corpo.addEventListener("touchstart", (e) => { if (e.touches.length !== 1 || e.target.closest(".mini-barras, .rel-abas")) { x0 = null; return; } x0 = e.touches[0].clientX; y0 = e.touches[0].clientY; }, { passive: true });
+  corpo.addEventListener("touchend", (e) => {
+    if (x0 === null) return;
+    const dx = e.changedTouches[0].clientX - x0, dy = e.changedTouches[0].clientY - y0; x0 = null;
+    if (Math.abs(dx) < 60 || Math.abs(dx) < Math.abs(dy) * 1.5) return;
+    const i = ABAS_REL.findIndex(([k]) => k === (S.relAba || "mes")), j = i + (dx < 0 ? 1 : -1);
+    if (j >= 0 && j < ABAS_REL.length) { S.relAba = ABAS_REL[j][0]; desenhar(); }
+  }, { passive: true });
   document.querySelectorAll("[data-abririnv]").forEach((b) => (b.onclick = abrirInvestimentos));
-  document.querySelectorAll("[data-cmodo]").forEach((b) => (b.onclick = () => { S.cmp.modo = b.dataset.cmodo; if (S.cmp.modo === "ano") S.cmp.ano = Number(S.cmp.mes.slice(0, 4)); desenhar(); }));
-  document.querySelectorAll("[data-cnav]").forEach((b) => (b.onclick = () => {
-    const n = Number(b.dataset.cnav);
-    if (S.cmp.modo === "mes") S.cmp.mes = somaMes(S.cmp.mes, n); else S.cmp.ano += n;
-    desenhar();
-  }));
-  document.querySelectorAll("[data-vercat]").forEach((b) => (b.onclick = () => verCategoria(b.dataset.vercat, S.cmp.modo === "mes" ? S.cmp.mes : mesAtual())));
-  document.querySelectorAll("[data-cm]").forEach((b) => (b.onclick = () => { S.cmp.mes = b.dataset.cm; S.cmp.modo = "mes"; desenhar(); }));
+  document.querySelectorAll("[data-rm]").forEach((b) => (b.onclick = () => { S.cmp.mes = somaMes(S.cmp.mes, Number(b.dataset.rm)); desenhar(); }));
   document.querySelectorAll("[data-ano]").forEach((b) => (b.onclick = () => { S.relAno += Number(b.dataset.ano); desenhar(); }));
+  document.querySelectorAll("[data-cm]").forEach((b) => (b.onclick = () => { S.cmp.mes = b.dataset.cm; S.relAba = "mes"; desenhar(); }));
+  document.querySelectorAll("[data-vercat]").forEach((b) => (b.onclick = () => verCategoria(b.dataset.vercat, S.cmp.mes)));
+  document.querySelectorAll("[data-vg]").forEach((b) => (b.onclick = () => verGastos(S.cmp.mes, b.dataset.vg)));
+  document.querySelectorAll("[data-vp]").forEach((b) => (b.onclick = () => verPagamentos(S.cmp.mes, b.dataset.vp)));
+  document.querySelectorAll("[data-consid]").forEach((b) => (b.onclick = () => { const [t, q] = b.dataset.consid.split("|"); verConsiderado(t, q, S.cmp.mes); }));
+  document.querySelectorAll("[data-verfat]").forEach((b) => (b.onclick = () => verFaturas(b.dataset.verfat, S.cmp.mes)));
+  document.querySelectorAll("[data-fatmes]").forEach((b) => (b.onclick = () => abrirFaturasMes(S.cmp.mes)));
 };
 
 function verFaturas(cid, mesIni) {
@@ -1271,6 +1390,8 @@ function atualizarFundo() {
     if (verCategoria.repintar && $("[data-detcat]")) verCategoria.repintar();
     if (abrirFaturasMes.repintar && $("[data-fatmesc]")) abrirFaturasMes.repintar();
     if (verConsiderado.repintar && $("[data-considc]")) verConsiderado.repintar();
+    if (verGastos.repintar && $("[data-gastosc]")) verGastos.repintar();
+    if (verPagamentos.repintar && $("[data-pagc]")) verPagamentos.repintar();
     if (abrirInvestimentos.repintar && $("[data-invtela]")) abrirInvestimentos.repintar();
     if (verInvest.repintar && $(".inv-top")) verInvest.repintar();
     if (gerirContas.repintar && $("[data-contas]")) gerirContas.repintar();
