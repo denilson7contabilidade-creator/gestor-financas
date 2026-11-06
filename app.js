@@ -1,7 +1,7 @@
 "use strict";
 /* Gestor de Finanças — app instalável, dados guardados só no aparelho e criptografados. */
 
-const VERSAO_APP = "3.13";
+const VERSAO_APP = "3.14";
 const $ = (s, el = document) => el.querySelector(s);
 const esc = (t) => String(t ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const ic = (n) => `<svg class="ic" viewBox="0 0 24 24">${ICONES[n] || ICONES["circle-ellipsis"]}</svg>`;
@@ -316,6 +316,8 @@ function faturaDe(cid, iso) {
   if (dia >= c.fechamento) fecha = somaMes(fecha, 1);
   return c.vencimento > c.fechamento ? fecha : somaMes(fecha, 1);
 }
+// Fatura a que uma compra pertence: a escolhida pela pessoa (fatMes) ou a calculada pelo fechamento
+const faturaDoLanc = (l) => l.fatMes || faturaDe(l.cartao, l.data);
 // Fatura que está aberta agora (ainda recebendo compras)
 const faturaAberta = (cid) => faturaDe(cid, hoje());
 
@@ -351,14 +353,15 @@ function saldoConta(id, ate) {
 }
 
 function infoFatura(cid, ym) {
-  let total = 0, pago = 0; const itens = [];
+  let total = 0, pago = 0, quitada = false; const itens = [];
   for (const l of S.d.lancs) {
     if (l.cartao !== cid) continue;
-    if (l.tipo === "despesa" && faturaDe(cid, l.data) === ym) { total += l.valor; itens.push(l); }
-    if (l.tipo === "fatura" && l.fatura === ym) pago += l.valor;
+    if (l.tipo === "despesa" && faturaDoLanc(l) === ym) { total += l.valor; itens.push(l); }
+    if (l.tipo === "fatura" && l.fatura === ym) { pago += l.valor; if (l.quita) quitada = true; }
   }
   itens.sort((a, b) => b.data.localeCompare(a.data));
-  return { total, pago, falta: Math.max(0, total - pago), itens };
+  // "quitada": a pessoa marcou que pagou a fatura inteira (mesmo que o valor do banco seja diferente do app)
+  return { total, pago, quitada, falta: quitada ? 0 : Math.max(0, total - pago), itens };
 }
 const vencimentoData = (cid, ym) => `${ym}-${p2(Math.min(cartao(cid).vencimento, new Date(...ym.split("-").map(Number), 0).getDate()))}`;
 
@@ -829,7 +832,10 @@ function itemLanc(l, comData) {
     const c = cat(l.cat);
     icone = c.icone; cor = c.cor; titulo = l.nota || c.nome; sinal = l.tipo === "despesa" ? "- " : "+ ";
     if (l.nota) partes.push(esc(c.nome));
-    if (l.cartao) partes.push(`${ic("credit-card")}${esc(cartao(l.cartao).nome)}`);
+    if (l.cartao) {
+      const fm = faturaDoLanc(l), paga = infoFatura(l.cartao, fm).falta === 0;
+      partes.push(`${ic("credit-card")}${esc(cartao(l.cartao).nome)} · fat. ${MES3[Number(fm.slice(5)) - 1].replace(".", "")}${paga ? " ✓" : ""}`);
+    }
     else if (l.conta && ehBenef(S.d.contas.find((x) => x.id === l.conta))) partes.push(`${ic("ticket")}${esc(conta(l.conta).nome)}`);
     if (l.parc) partes.push(`${l.parc.n}/${l.parc.t}`);
     if (l.fixo) partes.push(`${ic("repeat")}Fixo`);
@@ -1126,7 +1132,7 @@ function verFaturas(cid, mesIni) {
 function criarJaFoi(hj) {
   const cache = {};
   const quitada = (cid, ym) => { const k = cid + "|" + ym; if (!(k in cache)) cache[k] = infoFatura(cid, ym).falta === 0; return cache[k]; };
-  return (l) => (l.tipo === "despesa" && l.cartao && S.d.cartoes.some((c) => c.id === l.cartao)) ? quitada(l.cartao, faturaDe(l.cartao, l.data)) : l.data <= hj;
+  return (l) => (l.tipo === "despesa" && l.cartao && S.d.cartoes.some((c) => c.id === l.cartao)) ? quitada(l.cartao, faturaDoLanc(l)) : l.data <= hj;
 }
 
 // Relatório básico: quanto foi usado no cartão (compras) em cada mês, até o mês exibido
@@ -1168,12 +1174,18 @@ function abrirFaturasMes(mesIni) {
       <div class="cartao-box">${fs.map((x) => `<div class="fatura"><div class="cabf"><span class="bola">${ic("credit-card")}</span><div class="meio"><b>${esc(x.c.nome)}</b>
           <small style="display:block">Fecha dia ${x.c.fechamento} · vence ${dataCurta(vencimentoData(x.c.id, ym))} · ${x.f.itens.length} compra(s)</small></div></div>
         <div class="valf num">${fmtR(x.f.total)}</div>${etq(x)}${x.f.pago && x.f.falta ? `<small> falta ${fmtR(x.f.falta)}</small>` : ""}
-        <div class="acoes"><button class="btn contorno" data-verfat="${x.c.id}">Ver compras</button>${x.f.falta > 0 ? `<button class="btn preto" data-pagar="${x.c.id}">Pagar fatura</button>` : ""}</div></div>`).join("")}</div>
+        <div class="acoes"><button class="btn contorno" data-verfat="${x.c.id}">Ver compras</button>${x.f.falta > 0 ? `<button class="btn preto" data-pagar="${x.c.id}">Pagar fatura</button>` : ""}</div>
+        ${x.f.pago && x.f.falta ? `<button class="link" style="font-size:13.5px;margin-top:10px" data-quitar="${x.c.id}">Já paguei a fatura inteira (valor do banco diferente) → marcar como paga</button>` : ""}</div>`).join("")}</div>
       <p style="font-size:12.5px;color:#777;margin:10px 2px 0">Compras no cartão entram em “Despesas do mês” na data da compra, mas só saem do saldo quando você paga a fatura.</p>
       ${usoCartaoMensal(ym)}`;
     el.querySelectorAll("[data-m]").forEach((b) => (b.onclick = () => { ym = somaMes(ym, Number(b.dataset.m)); pintar(); }));
     el.querySelectorAll("[data-verfat]").forEach((b) => (b.onclick = () => verFaturas(b.dataset.verfat, ym)));
     el.querySelectorAll("[data-pagar]").forEach((b) => (b.onclick = () => pagarFatura(b.dataset.pagar, ym)));
+    el.querySelectorAll("[data-quitar]").forEach((b) => (b.onclick = async () => {
+      const pg = S.d.lancs.filter((l) => l.tipo === "fatura" && l.cartao === b.dataset.quitar && l.fatura === ym).pop();
+      if (!pg) return;
+      pg.quita = true; await salvar(); pintar(); desenhar(); aviso("Fatura marcada como paga. As compras dela saíram de “a pagar”.");
+    }));
   };
   pintar();
   abrirFaturasMes.repintar = pintar;
@@ -1226,6 +1238,8 @@ function pagarFatura(cid, ym, existente) {
       <label>Valor pago (R$)<input name="valor" inputmode="decimal" value="${valorIni ? nf2.format(valorIni / 100) : ""}" required></label>
       <div class="dois"><label>Pago com<select name="conta">${S.d.contas.map((c) => `<option value="${c.id}" ${existente && existente.conta === c.id ? "selected" : ""}>${esc(c.nome)}</option>`).join("")}</select></label>
       <label>Data<input type="date" name="data" value="${existente ? existente.data : hoje()}" required></label></div>
+      <label class="marcar"><input type="checkbox" name="quita" ${!existente || existente.quita ? "checked" : ""}> Paguei a fatura inteira</label>
+      <p style="font-size:12.5px;color:#777;margin:-4px 0 10px">Marcado: todas as compras desta fatura passam a contar como pagas, mesmo se o valor do banco for um pouco diferente do app. Desmarque se pagou só uma parte.</p>
       <p class="erro" data-e></p>
       <div class="botoes"><button class="btn preto">${existente ? "Salvar" : "Confirmar pagamento"}</button>
       ${existente ? `<button type="button" class="btn perigo" data-apagar>Apagar pagamento</button>` : ""}</div>
@@ -1236,6 +1250,7 @@ function pagarFatura(cid, ym, existente) {
     if (!(v > 0)) return ($("[data-e]", el).textContent = "Digite um valor válido.");
     const l = existente || { id: novoId(), tipo: "fatura", cartao: cid, fatura: ym };
     Object.assign(l, { valor: v, conta: fm.conta.value, data: fm.data.value });
+    if (fm.quita.checked) l.quita = true; else delete l.quita;
     if (!existente) S.d.lancs.push(l);
     await salvar(); fechar(); aviso(existente ? "Pagamento atualizado." : "Fatura paga. O valor saiu do saldo.");
     atualizarFundo();
@@ -1318,7 +1333,7 @@ function abrirEditor(l, opc = {}) {
   const editando = !!l;
   const fonte = l || opc.modelo || opc.fixo;
   const E = fonte
-    ? { tipo: fonte.tipo, cat: fonte.cat, nota: fonte.nota || "", conta: fonte.conta || S.d.contas[0]?.id, cartao: fonte.cartao || null,
+    ? { tipo: fonte.tipo, cat: fonte.cat, nota: fonte.nota || "", conta: fonte.conta || S.d.contas[0]?.id, cartao: fonte.cartao || null, fatMes: editando ? l.fatMes || null : null,
         destino: fonte.destino || S.d.contas[1]?.id, data: editando ? l.data : hoje(), expr: nf0.format(fonte.valor / 100).replace(/\./g, ""), parcelas: 1, repetir: 0 }
     : { tipo: "despesa", cat: null, expr: "", nota: "", data: hoje(), conta: S.d.contas[0]?.id, cartao: null, parcelas: 1, destino: S.d.contas[1]?.id, repetir: 0 };
   if (!fonte && S.mes !== mesAtual()) E.data = `${S.mes}-01`;
@@ -1475,7 +1490,19 @@ function abrirEditor(l, opc = {}) {
       : `<button class="chip" data-pg>${ic(icConta(conta(E.conta)))}<span>${esc(conta(E.conta).nome)}</span></button>`;
     const podeParc = (E.cartao || E.tipo === "receita") && !(editando && l.parc) && !opc.fixo && !E.repetir;
     const parc = podeParc ? `<button class="chip" data-parc>${E.parcelas}x</button>` : "";
-    box.innerHTML = pagoCom + parc;
+    const fatAuto = E.cartao ? faturaDe(E.cartao, E.data) : null, fatSel = E.fatMes || fatAuto;
+    const fat = E.cartao ? `<button class="chip ${E.fatMes ? "cartao" : ""}" data-fat>${ic("calendar")}<span>Fatura ${MES3[Number(fatSel.slice(5)) - 1].replace(".", "")} · vence ${dataCurta(vencimentoData(E.cartao, fatSel))}</span></button>` : "";
+    box.innerHTML = pagoCom + parc + fat;
+    const bf = $("[data-fat]", box);
+    if (bf) bf.onclick = async () => {
+      const c = cartao(E.cartao);
+      const ops = [-1, 0, 1, 2].map((k) => somaMes(fatAuto, k)).map((ym) => ({ valor: ym, rotulo: `Fatura de ${nomeMes(ym)}`, icone: "credit-card",
+        sub: `vence ${dataCurta(vencimentoData(E.cartao, ym))}${ym === fatAuto ? ` · automática (fecha dia ${c.fechamento})` : ""}${infoFatura(E.cartao, ym).quitada || (infoFatura(E.cartao, ym).total && !infoFatura(E.cartao, ym).falta) ? " · já paga" : ""}` }));
+      const v = await escolher("Em qual fatura entra?", ops, fatSel);
+      if (!v) return;
+      E.fatMes = v === fatAuto ? null : v;
+      pintarChips();
+    };
     pintarRepetir();
     $("[data-pg]", box).onclick = async () => {
       const ops = S.d.contas.filter((c) => !ehBenef(c)).map((c) => ({ valor: "conta:" + c.id, rotulo: c.nome, icone: "wallet", grupo: E.tipo === "despesa" ? "Sai do saldo em conta" : "Conta", sub: "Dinheiro, Pix ou débito" }));
@@ -1491,7 +1518,7 @@ function abrirEditor(l, opc = {}) {
       if (v === "novo") return editarCartao(null, (c) => { E.cartao = c.id; pintarChips(); });
       if (v === "novobenef") return editarConta(null, (c) => { if (c) { E.cartao = null; E.conta = c.id; E.parcelas = 1; } pintarChips(); }, { beneficio: true });
       const [k, id] = v.split(":");
-      if (k === "cartao") { E.cartao = id; } else { E.cartao = null; E.conta = id; E.parcelas = 1; }
+      if (k === "cartao") { if (E.cartao !== id) E.fatMes = null; E.cartao = id; } else { E.cartao = null; E.fatMes = null; E.conta = id; E.parcelas = 1; }
       pintarChips();
     };
     const pc = $("[data-parc]", box);
@@ -1636,6 +1663,7 @@ function abrirEditor(l, opc = {}) {
     const base = { tipo: E.tipo, valor: r.valor, nota: (E.nota || "").trim(), data: E.data };
     if (E.tipo === "transf") Object.assign(base, { conta: E.conta, destino: E.destino });
     else Object.assign(base, { cat: E.cat, conta: E.cartao ? null : E.conta, cartao: E.cartao || null });
+    if (base.cartao && E.fatMes) base.fatMes = E.fatMes;
 
     let msg = "Lançamento adicionado.";
     const parcelado = (E.cartao || E.tipo === "receita") && E.parcelas > 1;
@@ -1643,11 +1671,12 @@ function abrirEditor(l, opc = {}) {
       // lançamento existente passou a ser parcelado: vira N parcelas
       const n = E.parcelas, cada = Math.floor(r.valor / n), sobra = r.valor - cada * n, g = novoId();
       S.d.lancs = S.d.lancs.filter((x) => x.id !== l.id);
-      for (let i = 0; i < n; i++) S.d.lancs.push({ ...base, id: novoId() + i, valor: cada + (i === 0 ? sobra : 0), data: somaMesData(E.data, i), parc: { n: i + 1, t: n, g } });
+      for (let i = 0; i < n; i++) S.d.lancs.push({ ...base, id: novoId() + i, valor: cada + (i === 0 ? sobra : 0), data: somaMesData(E.data, i), parc: { n: i + 1, t: n, g }, ...(base.fatMes ? { fatMes: somaMes(base.fatMes, i) } : {}) });
       msg = E.tipo === "receita" ? `Alterado para receber em ${n}x de ${fmtR(cada)}.` : `Alterado para o cartão em ${n}x de ${fmtR(cada)}.`;
     } else if (editando) {
       const alvo = S.d.lancs.find((x) => x.id === l.id);
       Object.assign(alvo, base);
+      if (!base.fatMes) delete alvo.fatMes;
       if (!alvo.cartao && alvo.tipo !== "receita") delete alvo.parc;
       msg = "Alterações salvas.";
       if (E.repetir && !fixoLigado() && !alvo.parc && alvo.tipo !== "transf") {
@@ -1658,7 +1687,7 @@ function abrirEditor(l, opc = {}) {
       }
     } else if (parcelado) {
       const n = E.parcelas, cada = Math.floor(r.valor / n), sobra = r.valor - cada * n, g = novoId();
-      for (let i = 0; i < n; i++) S.d.lancs.push({ ...base, id: novoId() + i, valor: cada + (i === 0 ? sobra : 0), data: somaMesData(E.data, i), parc: { n: i + 1, t: n, g } });
+      for (let i = 0; i < n; i++) S.d.lancs.push({ ...base, id: novoId() + i, valor: cada + (i === 0 ? sobra : 0), data: somaMesData(E.data, i), parc: { n: i + 1, t: n, g }, ...(base.fatMes ? { fatMes: somaMes(base.fatMes, i) } : {}) });
       msg = E.tipo === "receita" ? `Receita lançada em ${n}x de ${fmtR(cada)}, uma por mês.` : `Lançado no cartão em ${n}x. Não saiu do saldo.`;
     } else {
       const novo = { ...base, id: novoId() };
