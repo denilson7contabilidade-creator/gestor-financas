@@ -1,7 +1,7 @@
 "use strict";
 /* Gestor de Finanças — app instalável, dados guardados só no aparelho e criptografados. */
 
-const VERSAO_APP = "3.12";
+const VERSAO_APP = "3.13";
 const $ = (s, el = document) => el.querySelector(s);
 const esc = (t) => String(t ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const ic = (n) => `<svg class="ic" viewBox="0 0 24 24">${ICONES[n] || ICONES["circle-ellipsis"]}</svg>`;
@@ -665,7 +665,9 @@ function telaInicio() {
   }
   const saldoReal = S.d.contas.filter((c) => !ehBenef(c)).reduce((s, c) => s + saldoConta(c.id), 0);
   // soma das faturas de todos os cartões que vencem no mês exibido
-  const fatMes = S.d.cartoes.reduce((s, c) => s + infoFatura(c.id, S.mes).total, 0);
+  // faturas do mês: só o que ainda falta pagar (fatura paga sai daqui)
+  const fatTot = S.d.cartoes.reduce((s, c) => s + infoFatura(c.id, S.mes).total, 0);
+  const fatMes = S.d.cartoes.reduce((s, c) => s + infoFatura(c.id, S.mes).falta, 0);
   // despesas e receitas do mês: o que já aconteceu + o que ainda vai acontecer (datas futuras e fixos não confirmados)
   const hj = hoje(), pendM = fixosPendentes(S.mes), jaFoi = criarJaFoi(hj);
   const somaL = (tipo, futuro) => S.d.lancs.filter((l) => l.tipo === tipo && l.data.startsWith(S.mes) && (futuro ? !jaFoi(l) : jaFoi(l))).reduce((s, l) => s + l.valor, 0);
@@ -688,7 +690,7 @@ function telaInicio() {
       <div class="mini">
         ${S.d.contas.some(ehBenef) ? `<button class="faixa-it" data-aba="relatorios"><span>${ic("ticket")}Benefícios</span><b class="num">${fmtR(S.d.contas.filter(ehBenef).reduce((t, c) => t + saldoConta(c.id), 0))}</b></button>` : ""}
         ${S.d.invest.length ? `<button class="faixa-it" data-abririnv><span>${ic("piggy-bank")}Investido</span><b class="num">${fmtR(totalInvestido())}</b></button>` : ""}
-        ${S.d.cartoes.length ? `<button class="faixa-it" data-fatmes><span>${ic("credit-card")}Faturas cartões</span><b class="num">${fmtR(fatMes)}</b></button>` : ""}
+        ${S.d.cartoes.length ? `<button class="faixa-it" data-fatmes><span>${ic("credit-card")}${fatTot && !fatMes ? "Faturas pagas" : "Faturas a pagar"}</span><b class="num">${fatTot && !fatMes ? "✓ tudo pago" : fmtR(fatMes)}</b></button>` : ""}
       </div>
     </header>${faixaInstalar("Instale o app na tela inicial.")}
     <div class="conteudo" id="lista">${corpo}</div>`;
@@ -1127,6 +1129,27 @@ function criarJaFoi(hj) {
   return (l) => (l.tipo === "despesa" && l.cartao && S.d.cartoes.some((c) => c.id === l.cartao)) ? quitada(l.cartao, faturaDe(l.cartao, l.data)) : l.data <= hj;
 }
 
+// Relatório básico: quanto foi usado no cartão (compras) em cada mês, até o mês exibido
+function usoCartaoMensal(ate) {
+  const meses = Array.from({ length: 12 }, (_, i) => somaMes(ate, i - 11));
+  const linhas = meses.map((ym) => {
+    const por = S.d.cartoes.map((c) => ({ c, v: S.d.lancs.filter((l) => l.tipo === "despesa" && l.cartao === c.id && l.data.startsWith(ym)).reduce((t, l) => t + l.valor, 0) }));
+    return { ym, por, tot: por.reduce((t, x) => t + x.v, 0) };
+  });
+  const comUso = linhas.filter((x) => x.tot > 0);
+  if (!comUso.length) return "";
+  while (linhas.length && !linhas[0].tot) linhas.shift(); // não mostra meses antes do primeiro uso
+  const max = Math.max(...linhas.map((x) => x.tot), 1);
+  const media = Math.round(comUso.reduce((t, x) => t + x.tot, 0) / comUso.length);
+  const varios = S.d.cartoes.length > 1;
+  return `<section class="uso-cartao"><h3>Uso do cartão por mês</h3>
+    <p class="uso-sub">Total das compras feitas no cartão em cada mês · média ${fmtR(media)}</p>
+    ${linhas.slice().reverse().map((x) => `<div class="uso-l ${x.ym === mesAtual() ? "atual" : ""}">
+      <span class="uso-m">${MES3[Number(x.ym.slice(5)) - 1].replace(".", "")}/${x.ym.slice(2, 4)}</span>
+      <span class="uso-b"><i style="width:${(x.tot / max) * 100}%"></i>${varios && x.tot ? `<small>${x.por.filter((p) => p.v).map((p) => `${esc(p.c.nome)} ${fmt(p.v)}`).join(" · ")}</small>` : ""}</span>
+      <b class="num">${x.tot ? fmt(x.tot) : "—"}</b></div>`).join("")}</section>`;
+}
+
 // Folha aberta por "Faturas cartões" no Início: as faturas que vencem no mês exibido
 function abrirFaturasMes(mesIni) {
   let ym = mesIni;
@@ -1146,7 +1169,8 @@ function abrirFaturasMes(mesIni) {
           <small style="display:block">Fecha dia ${x.c.fechamento} · vence ${dataCurta(vencimentoData(x.c.id, ym))} · ${x.f.itens.length} compra(s)</small></div></div>
         <div class="valf num">${fmtR(x.f.total)}</div>${etq(x)}${x.f.pago && x.f.falta ? `<small> falta ${fmtR(x.f.falta)}</small>` : ""}
         <div class="acoes"><button class="btn contorno" data-verfat="${x.c.id}">Ver compras</button>${x.f.falta > 0 ? `<button class="btn preto" data-pagar="${x.c.id}">Pagar fatura</button>` : ""}</div></div>`).join("")}</div>
-      <p style="font-size:12.5px;color:#777;margin:10px 2px 0">Compras no cartão entram em “Despesas do mês” na data da compra, mas só saem do saldo quando você paga a fatura.</p>`;
+      <p style="font-size:12.5px;color:#777;margin:10px 2px 0">Compras no cartão entram em “Despesas do mês” na data da compra, mas só saem do saldo quando você paga a fatura.</p>
+      ${usoCartaoMensal(ym)}`;
     el.querySelectorAll("[data-m]").forEach((b) => (b.onclick = () => { ym = somaMes(ym, Number(b.dataset.m)); pintar(); }));
     el.querySelectorAll("[data-verfat]").forEach((b) => (b.onclick = () => verFaturas(b.dataset.verfat, ym)));
     el.querySelectorAll("[data-pagar]").forEach((b) => (b.onclick = () => pagarFatura(b.dataset.pagar, ym)));
