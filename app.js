@@ -1,7 +1,7 @@
 "use strict";
 /* Gestor de Finanças — app instalável, dados guardados só no aparelho e criptografados. */
 
-const VERSAO_APP = "3.14";
+const VERSAO_APP = "3.15";
 const $ = (s, el = document) => el.querySelector(s);
 const esc = (t) => String(t ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const ic = (n) => `<svg class="ic" viewBox="0 0 24 24">${ICONES[n] || ICONES["circle-ellipsis"]}</svg>`;
@@ -313,7 +313,8 @@ function faturaDe(cid, iso) {
   const c = cartao(cid);
   const dia = Number(iso.slice(8));
   let fecha = iso.slice(0, 7);
-  if (dia >= c.fechamento) fecha = somaMes(fecha, 1);
+  // fechaInclui: compras feitas no próprio dia do fechamento ainda entram na fatura que está fechando
+  if (c.fechaInclui ? dia > c.fechamento : dia >= c.fechamento) fecha = somaMes(fecha, 1);
   return c.vencimento > c.fechamento ? fecha : somaMes(fecha, 1);
 }
 // Fatura a que uma compra pertence: a escolhida pela pessoa (fatMes) ou a calculada pelo fechamento
@@ -2633,15 +2634,31 @@ function editarCartao(c, depois) {
     <label>Nome do cartão<input name="nome" maxlength="24" value="${esc(c ? c.nome : "")}" placeholder="Ex.: Nubank, Itaú" required></label>
     <div class="dois"><label>Dia que fecha<select name="fech">${dias(c ? c.fechamento : 1)}</select></label>
     <label>Dia que vence<select name="venc">${dias(c ? c.vencimento : 10)}</select></label></div>
-    <p style="font-size:13px;color:#777;margin:-4px 0 14px">Compras feitas a partir do dia do fechamento entram na fatura seguinte.</p>
+    <div class="origem" style="margin-top:0">
+      <span style="font-size:13.5px;color:#444">Compra feita <b>no dia do fechamento</b> entra:</span>
+      <label class="marcar"><input type="radio" name="inclui" value="0" ${!c || !c.fechaInclui ? "checked" : ""}> Na próxima fatura</label>
+      <label class="marcar"><input type="radio" name="inclui" value="1" ${c && c.fechaInclui ? "checked" : ""}> Ainda na fatura que está fechando</label>
+    </div>
+    <p style="font-size:12.5px;color:#777;margin:-4px 0 12px" data-exfat></p>
+    <p style="font-size:12.5px;color:#777;margin:0 0 14px">Use as datas que aparecem no app do banco. Ao salvar, o app recalcula a fatura de todas as compras deste cartão (menos as que você escolheu a fatura na mão).</p>
     <div class="botoes"><button class="btn preto">Salvar</button>
       ${c ? `<button type="button" class="btn contorno" data-virarbenef>${ic("ticket")}É um cartão de benefício (VA/VR)</button>` : `<p style="font-size:13px;color:#777;margin:0;text-align:center">Vale alimentação, refeição ou combustível? Cadastre em <b>Perfil → Contas</b> como cartão de benefício, sem fatura.</p>`}
       ${c ? `<button type="button" class="btn perigo" data-apagar>Apagar cartão</button>` : ""}</div></form>`);
   const vb = $("[data-virarbenef]", el);
   if (vb) vb.onclick = () => converterEmBeneficio(c, depois);
+  // exemplo ao vivo de para qual fatura vai uma compra no dia do fechamento
+  const fm = $("[data-f]", el);
+  const exemplo = () => {
+    const fe = Number(fm.fech.value), ve = Number(fm.venc.value), inc = fm.inclui.value === "1";
+    const ym = mesAtual(), dia = `${ym}-${p2(fe)}`;
+    let fecha = ym; if (!inc) fecha = somaMes(fecha, 1);
+    const fat = ve > fe ? fecha : somaMes(fecha, 1);
+    $("[data-exfat]", el).textContent = `Ex.: compra em ${dataCurta(dia)} → fatura de ${nomeMes(fat)} (vence ${p2(ve)}/${fat.slice(5)}).`;
+  };
+  fm.querySelectorAll("select, input[type=radio]").forEach((x) => (x.onchange = exemplo)); exemplo();
   $("[data-f]", el).onsubmit = async (e) => {
     e.preventDefault();
-    const f = e.target, dados = { nome: f.nome.value.trim(), fechamento: Number(f.fech.value), vencimento: Number(f.venc.value) };
+    const f = e.target, dados = { nome: f.nome.value.trim(), fechamento: Number(f.fech.value), vencimento: Number(f.venc.value), fechaInclui: f.inclui.value === "1" };
     let alvo = c;
     if (c) Object.assign(c, dados); else { alvo = { id: novoId(), ...dados }; S.d.cartoes.push(alvo); }
     await salvar(); fechar(); aviso("Cartão salvo."); setTimeout(() => depois ? depois(alvo) : desenhar(), 0);
