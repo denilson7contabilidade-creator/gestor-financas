@@ -1,7 +1,7 @@
 "use strict";
 /* Gestor de Finanças — app instalável, dados guardados só no aparelho e criptografados. */
 
-const VERSAO_APP = "3.15";
+const VERSAO_APP = "3.16";
 const $ = (s, el = document) => el.querySelector(s);
 const esc = (t) => String(t ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const ic = (n) => `<svg class="ic" viewBox="0 0 24 24">${ICONES[n] || ICONES["circle-ellipsis"]}</svg>`;
@@ -84,7 +84,7 @@ function gravarUsuario(u) {
 }
 
 // Sessão aberta (só na memória)
-const S = { u: null, chaveBytes: null, chave: null, d: null, aba: "inicio", mes: mesAtual(), graf: { tipo: "despesa", mes: mesAtual() }, relAno: Number(mesAtual().slice(0, 4)), cmp: { modo: "mes", mes: mesAtual(), ano: Number(mesAtual().slice(0, 4)) } };
+const S = { u: null, chaveBytes: null, chave: null, d: null, aba: "inicio", mes: mesAtual(), graf: { tipo: "despesa", mes: mesAtual() }, relAba: "mes", relAno: Number(mesAtual().slice(0, 4)), cmp: { modo: "mes", mes: mesAtual(), ano: Number(mesAtual().slice(0, 4)) } };
 
 async function salvar() {
   const pac = await cifrar(S.chave, enc.encode(JSON.stringify(S.d)));
@@ -195,7 +195,7 @@ async function abrirSessao(u, chaveBytes, dados) {
   S.mes = mesAtual();
   S.graf = { tipo: "despesa", mes: mesAtual() };
   S.relAno = Number(mesAtual().slice(0, 4));
-  S.cmp = { modo: "mes", mes: mesAtual(), ano: Number(mesAtual().slice(0, 4)) };
+  S.cmp = { modo: "mes", mes: mesAtual(), ano: Number(mesAtual().slice(0, 4)) }; S.relAba = "mes";
   S.aba = "inicio";
   lembrarSessao();
   try { navigator.storage && navigator.storage.persist && navigator.storage.persist(); } catch {}
@@ -270,10 +270,22 @@ function aplicarTema(t = temaAtual()) {
   r.style.setProperty("--fundo-suave", t.suave);
   r.style.setProperty("--laranja-graf", t.graf);
   r.dataset.contraste = t.claro ? "claro" : "escuro";
+  // topo escuro (estilo "fintech"): a cor do tema misturada com azul-noite
+  const base = t.claro ? t.fundo : t.graf;
+  r.style.setProperty("--noite", misturar(base, "#0A0F1A", 0.78));
+  r.style.setProperty("--noite2", misturar(base, "#070A12", 0.86));
+  r.style.setProperty("--noite-tx", misturar(base, "#FFFFFF", 0.62));
+  r.style.setProperty("--noite-tx2", misturar(base, "#FFFFFF", 0.8));
   const m = document.querySelector('meta[name="theme-color"]');
-  if (m) m.content = t.fundo;
+  if (m) m.content = misturar(base, "#0A0F1A", 0.78);
   CORES[1] = t.graf;
   CORES[3] = clarear(t.graf, 0.55);
+}
+// mistura duas cores (q = quanto da segunda)
+function misturar(a, b, q) {
+  const h = (x) => { const n = parseInt(x.slice(1), 16); return [n >> 16, (n >> 8) & 255, n & 255]; };
+  const A = h(a), B = h(b);
+  return "#" + A.map((v, i) => Math.round(v * (1 - q) + B[i] * q).toString(16).padStart(2, "0")).join("");
 }
 // mistura uma cor com branco (0 = igual, 1 = branco)
 function clarear(hex, q) {
@@ -617,86 +629,153 @@ function nav() {
 const ligar = {};
 
 /* ----- Início ----- */
+// Resumo do mês (Início e Relatórios). Despesas = tudo do mês pela data da compra + fixos não confirmados,
+// dividido em: pagas · a pagar (vence neste mês ou já venceu) · cartão (compras que só vencem numa fatura seguinte).
+const temCartao = (cid) => !!cid && S.d.cartoes.some((c) => c.id === cid);
+const vaiPraFaturaSeguinte = (l, ym) => l.tipo === "despesa" && temCartao(l.cartao) && faturaDoLanc(l) > ym;
+const fixoNaFaturaSeguinte = (f, ym) => f.tipo === "despesa" && temCartao(f.cartao) && faturaDe(f.cartao, dataFixo(f, ym)) > ym;
+function resumoMes(ym) {
+  const hj = hoje(), jaFoi = criarJaFoi(hj);
+  const r = { desPagas: 0, desAPagar: 0, desCartao: 0, recOk: 0, recFalta: 0 };
+  const fats = new Set();
+  for (const l of S.d.lancs) {
+    if (!l.data.startsWith(ym)) continue;
+    if (l.tipo === "despesa") {
+      if (jaFoi(l)) r.desPagas += l.valor;
+      else if (vaiPraFaturaSeguinte(l, ym)) { r.desCartao += l.valor; fats.add(faturaDoLanc(l)); }
+      else r.desAPagar += l.valor;
+    } else if (l.tipo === "receita") { if (l.data <= hj) r.recOk += l.valor; else r.recFalta += l.valor; }
+    else if (l.tipo === "resg" && l.prog) r.recOk += l.valor;
+  }
+  for (const f of fixosPendentes(ym)) {
+    if (f.tipo === "receita") r.recFalta += f.valor;
+    else if (fixoNaFaturaSeguinte(f, ym)) { r.desCartao += f.valor; fats.add(faturaDe(f.cartao, dataFixo(f, ym))); }
+    else r.desAPagar += f.valor;
+  }
+  r.recFalta += progAReceber(ym).reduce((t, x) => t + x.valor, 0);
+  r.des = r.desPagas + r.desAPagar + r.desCartao; r.rec = r.recOk + r.recFalta;
+  const fm = [...fats].sort();
+  r.rotCartao = fm.length > 1 ? "faturas seguintes" : `fatura ${fm.length ? MES3[Number(fm[0].slice(5)) - 1] : ""}`;
+  return r;
+}
+const mesCurto = (ym) => MES3[Number(ym.slice(5)) - 1].replace(".", "");
+const saudacao = () => { const h = new Date().getHours(); return h < 12 ? "Bom dia" : h < 18 ? "Boa tarde" : "Boa noite"; };
+const diasAte = (iso, hj = hoje()) => Math.round((dataLocal(iso) - dataLocal(hj)) / 864e5);
+// Faixa de meses para deslizar (12 para trás, 3 para frente)
+function faixaMeses(ymSel, attr) {
+  const atual = mesAtual(), ms = [];
+  for (let i = -12; i <= 3; i++) ms.push(somaMes(atual, i));
+  if (!ms.includes(ymSel)) ms.push(ymSel), ms.sort();
+  const anoSel = ymSel.slice(0, 4);
+  return `<div class="tn-meses" data-rolmeses>${ms.map((ym) => `<button ${attr}="${ym}" class="${ym === ymSel ? "on" : ""}">${ym === ymSel ? `${mesCurto(ym)} ${ym.slice(0, 4)}` : mesCurto(ym) + (ym.slice(0, 4) !== anoSel ? "/" + ym.slice(2, 4) : "")}</button>`).join("")}</div>`;
+}
+function centralizarMeses() {
+  document.querySelectorAll("[data-rolmeses]").forEach((rol) => { const at = rol.querySelector(".on"); if (at) rol.scrollLeft = at.offsetLeft - rol.clientWidth / 2 + at.clientWidth / 2; });
+}
+// Barra colorida: [[valor, classe], ...]
+const barraPartes = (partes, total) => total ? `<div class="vbarra">${partes.filter(([v]) => v > 0).map(([v, c]) => `<i class="${c}" style="flex:${v}"></i>`).join("")}</div>` : `<div class="vbarra vazia"></div>`;
+function blocosMes(r) {
+  const des = `<div class="vb"><button class="vl" data-consid="despesa|ok"><span>Despesas do mês</span><b class="num">${fmt(r.des)}</b></button>
+    ${barraPartes([[r.desPagas, "b1"], [r.desAPagar, "b2"], [r.desCartao, "b3"]], r.des)}
+    <div class="vleg"><button data-consid="despesa|ok"><i class="b1"></i>${fmt(r.desPagas)} pagas</button><button data-consid="despesa|falta"><i class="b2"></i>${fmt(r.desAPagar)} a pagar</button>${r.desCartao ? `<button data-consid="despesa|cartao" class="cart">${ic("credit-card")}${fmt(r.desCartao)} ${r.rotCartao}</button>` : ""}</div></div>`;
+  const rec = `<div class="vb"><button class="vl" data-consid="receita|ok"><span>Receitas do mês</span><b class="num">${fmt(r.rec)}</b></button>
+    ${barraPartes([[r.recOk, "b1"], [r.recFalta, "b4"]], r.rec)}
+    <div class="vleg"><button data-consid="receita|ok"><i class="b1"></i>${fmt(r.recOk)} recebidas</button><button data-consid="receita|falta"><i class="b4"></i>${fmt(r.recFalta)} a receber</button></div></div>`;
+  // o maior fica em cima
+  return r.rec > r.des ? rec + des : des + rec;
+}
+
 function telaInicio() {
-  const t = totaisMes(S.mes);
   const [a, m] = S.mes.split("-");
+  const hj = hoje();
   const porLanc = ordemInicio() === "lanc";
   const doMes = S.d.lancs.filter((l) => l.data.startsWith(S.mes))
     .sort(porLanc ? (x, y) => quandoLancado(y) - quandoLancado(x) || (y.id < x.id ? -1 : y.id > x.id ? 1 : 0)
       : (x, y) => y.data.localeCompare(x.data) || y.id.localeCompare(x.id));
-  const pend = fixosPendentes(S.mes);
+
+  // O que ainda vai acontecer no mês aparece na própria data: fixos, recebimentos de investimentos e faturas
+  const pend = [];
+  for (const f of fixosPendentes(S.mes)) {
+    const c = cat(f.cat), cart = temCartao(f.cartao);
+    pend.push({ data: dataFixo(f, S.mes), html: `<div class="item pendente"><button class="pend-abrir" data-fixo="${f.id}">${bola(c.icone, c.cor)}
+      <span class="meio"><div>${esc(f.nota || c.nome)}</div><small>${ic("repeat")}Fixo${f.nota ? " · " + esc(c.nome) : ""}${cart ? ` · ${ic("credit-card")}${esc(cartao(f.cartao).nome)}` : ""}</small></span></button>
+      <div class="pend-dir"><span class="val num">${f.tipo === "despesa" ? "- " : "+ "}${fmt(f.valor)}</span><button class="pend-conf" data-confirmar="${f.id}">${ic("check")}Confirmar</button></div></div>` });
+  }
+  for (const x of progAReceber(S.mes)) {
+    pend.push({ data: x.data < S.mes + "-01" ? (hj.startsWith(S.mes) ? hj : S.mes + "-01") : x.data, html: `<div class="item pendente"><button class="pend-abrir" data-progok="${x.inv.id}|${x.p.id}|${x.ym}">${bola(x.inv.icone, corInv(x.inv))}
+      <span class="meio"><div>${esc(x.inv.nome)}</div><small>${x.atrasada ? `<b style="color:#C62828">atrasada</b> · ` : ""}${ic("piggy-bank")}${x.rot}</small></span></button>
+      <div class="pend-dir"><span class="val num">+ ${fmt(x.valor)}</span><button class="pend-conf" data-progok="${x.inv.id}|${x.p.id}|${x.ym}">${ic("check")}Confirmar</button></div></div>` });
+  }
+  for (const c of S.d.cartoes) {
+    const f = infoFatura(c.id, S.mes);
+    if (!(f.falta > 0)) continue;
+    const venc = vencimentoData(c.id, S.mes), atras = venc < hj;
+    pend.push({ data: venc, html: `<div class="item pendente"><button class="pend-abrir" data-verfat="${c.id}">${bola("credit-card")}
+      <span class="meio"><div>Fatura ${esc(c.nome)} ${mesCurto(S.mes)}.</div><small>${atras ? `<b style="color:#C62828">venceu</b> · ` : "Vence · "}${f.itens.length} compra(s)${f.pago ? ` · falta ${fmt(f.falta)}` : ""}</small></span></button>
+      <div class="pend-dir"><span class="val num">- ${fmt(f.falta)}</span><button class="pend-conf" data-pagar="${c.id}">Pagar</button></div></div>` });
+  }
+
   let corpo = lembreteBackup() + cartaoFamilia();
-  if (pend.length) {
-    const pd = pend.filter((f) => f.tipo === "despesa").reduce((s, f) => s + f.valor, 0);
-    const pr = pend.filter((f) => f.tipo === "receita").reduce((s, f) => s + f.valor, 0);
-    corpo += `<div class="dia-cab fixos-cab"><span>${ic("repeat")} Fixos a confirmar</span><span class="num">${[pd ? `- ${fmt(pd)}` : "", pr ? `+ ${fmt(pr)}` : ""].filter(Boolean).join(" · ")}</span></div>`;
-    corpo += pend.map((f) => {
-      const c = cat(f.cat);
-      return `<div class="item pendente"><button class="pend-abrir" data-fixo="${f.id}">${bola(c.icone, c.cor)}
-        <span class="meio"><div>${esc(f.nota || c.nome)}</div><small>dia ${dataCurta(dataFixo(f, S.mes))}${f.nota ? " · " + esc(c.nome) : ""}${f.cartao ? " · " + esc(cartao(f.cartao).nome) : ""}</small></span>
-        <span class="val num">${f.tipo === "despesa" ? "- " : "+ "}${fmt(f.valor)}</span></button>
-        <button class="pend-ok" data-confirmar="${f.id}" aria-label="Confirmar">${ic("check")}</button></div>`;
-    }).join("");
+  const mesNome = MESES[m - 1].charAt(0).toUpperCase() + MESES[m - 1].slice(1);
+  if (doMes.length || pend.length) {
+    corpo += `<div class="lista-cab"><b>${mesNome}, ${porLanc ? "últimos lançados" : "dia a dia"}</b><button data-ordini="${porLanc ? "dia" : "lanc"}">${porLanc ? "Ver dia a dia" : "Últimos lançados"}</button></div>`;
   }
-  const pInv = progAReceber(S.mes);
-  if (pInv.length) {
-    corpo += `<div class="dia-cab fixos-cab"><span>${ic("piggy-bank")} Investimentos a receber</span><span class="num">+ ${fmt(pInv.reduce((t, x) => t + x.valor, 0))}</span></div>`;
-    corpo += pInv.map((x) => `<div class="item pendente"><button class="pend-abrir" data-progok="${x.inv.id}|${x.p.id}|${x.ym}">${bola(x.inv.icone, corInv(x.inv))}
-        <span class="meio"><div>${esc(x.inv.nome)}</div><small>${x.atrasada ? `<b style="color:#C62828">atrasada</b> · ` : ""}${x.sub}</small></span><span class="val num">+ ${fmt(x.valor)}</span></button>
-        <button class="pend-ok" data-progok="${x.inv.id}|${x.p.id}|${x.ym}" aria-label="Confirmar">${ic("check")}</button></div>`).join("");
-  }
-  if (!doMes.length) {
-    corpo += `<div class="vazio">${ic("receipt")}Nenhum lançamento em ${MESES[m - 1]}.<br>Toque no <b>+</b> para adicionar.</div>`;
-  } else {
-    corpo += `<div class="dia-cab ordem-cab"><span>Lançamentos</span>
-      <div class="alternar det-alt"><button data-ordini="lanc" class="${porLanc ? "ativo" : ""}">Últimos lançados</button><button data-ordini="dia" class="${porLanc ? "" : "ativo"}">Por dia</button></div></div>`;
-  }
-  if (doMes.length && porLanc) {
+  const cabDia = (d, res) => {
+    const n = diasAte(d, hj);
+    const extra = d === hj ? `<em class="hoje-chip">Hoje</em>` : n > 0 ? `<em class="fut">${n === 1 ? "amanhã" : `em ${n} dias`}</em>` : "";
+    return `<div class="dia-cab${d === hj ? " hoje" : ""}${n > 0 ? " futuro" : ""}"><span>${nomeDia(d)} ${extra}</span><span class="num">${res || ""}</span></div>`;
+  };
+  if (porLanc) {
     corpo += doMes.map((l) => itemLanc(l, true)).join("");
-  } else if (doMes.length) {
+    if (pend.length) {
+      corpo += `<div class="dia-cab futuro"><span>Ainda vão acontecer em ${MESES[m - 1]}</span><span></span></div>`;
+      const pd = [...pend].sort((x, y) => x.data.localeCompare(y.data));
+      let ult = "";
+      for (const p of pd) { if (p.data !== ult) { corpo += cabDia(p.data); ult = p.data; } corpo += p.html; }
+    }
+  } else {
     const dias = {};
-    for (const l of doMes) (dias[l.data] ||= []).push(l);
-    for (const [d, ls] of Object.entries(dias)) {
+    for (const l of doMes) (dias[l.data] ||= { ls: [], ps: [] }).ls.push(l);
+    for (const p of pend) (dias[p.data] ||= { ls: [], ps: [] }).ps.push(p);
+    if (hj.startsWith(S.mes) && !dias[hj] && Object.keys(dias).length) dias[hj] = { ls: [], ps: [] };
+    for (const d of Object.keys(dias).sort().reverse()) {
+      const { ls, ps } = dias[d];
       const desDia = ls.filter((l) => l.tipo === "despesa").reduce((s, l) => s + l.valor, 0);
       const recDia = ls.filter((l) => l.tipo === "receita").reduce((s, l) => s + l.valor, 0);
       const invDia = ls.filter((l) => l.tipo === "aplic").reduce((s, l) => s + l.valor, 0);
       const res0 = desDia && recDia ? `<span class="dd">− ${fmt(desDia)}</span> <span class="dr">+ ${fmt(recDia)}</span>`
         : desDia ? `Despesas: ${fmt(desDia)}` : recDia ? `Receitas: ${fmt(recDia)}` : "";
       const res = [res0, invDia ? `Investido: ${fmt(invDia)}` : ""].filter(Boolean).join(" · ");
-      corpo += `<div class="dia-cab"><span>${nomeDia(d)}</span><span class="num">${res}</span></div>`;
-      corpo += ls.map((l) => itemLanc(l)).join("");
+      corpo += cabDia(d, res) + ps.map((p) => p.html).join("") + ls.map((l) => itemLanc(l)).join("");
     }
   }
+  if (!doMes.length && !pend.length) corpo += `<div class="vazio">${ic("receipt")}Nenhum lançamento em ${MESES[m - 1]}.<br>Toque no <b>+</b> para adicionar.</div>`;
+
   const saldoReal = S.d.contas.filter((c) => !ehBenef(c)).reduce((s, c) => s + saldoConta(c.id), 0);
-  // soma das faturas de todos os cartões que vencem no mês exibido
-  // faturas do mês: só o que ainda falta pagar (fatura paga sai daqui)
-  const fatTot = S.d.cartoes.reduce((s, c) => s + infoFatura(c.id, S.mes).total, 0);
-  const fatMes = S.d.cartoes.reduce((s, c) => s + infoFatura(c.id, S.mes).falta, 0);
-  // despesas e receitas do mês: o que já aconteceu + o que ainda vai acontecer (datas futuras e fixos não confirmados)
-  const hj = hoje(), pendM = fixosPendentes(S.mes), jaFoi = criarJaFoi(hj);
-  const somaL = (tipo, futuro) => S.d.lancs.filter((l) => l.tipo === tipo && l.data.startsWith(S.mes) && (futuro ? !jaFoi(l) : jaFoi(l))).reduce((s, l) => s + l.valor, 0);
-  const desPagas = somaL("despesa", false), desAPagar = somaL("despesa", true) + pendM.filter((f) => f.tipo === "despesa").reduce((s, f) => s + f.valor, 0);
-  // investimentos programados para cair na conta também contam como receita a receber / recebida
-  const invRecebido = S.d.lancs.filter((l) => l.tipo === "resg" && l.prog && l.data.startsWith(S.mes)).reduce((s, l) => s + l.valor, 0);
-  const invAReceber = progAReceber(S.mes).reduce((s, x) => s + x.valor, 0);
-  const recOk = somaL("receita", false) + invRecebido, recAReceber = somaL("receita", true) + pendM.filter((f) => f.tipo === "receita").reduce((s, f) => s + f.valor, 0) + invAReceber;
-  const linhas2 = (ok, falta, rOk, rFalta) => (ok || falta)
-    ? `<button class="sub2" data-consid="${rOk === "pagas" ? "despesa" : "receita"}|ok"><i class="ok"></i>${fmt(ok)} ${rOk}</button><button class="sub2" data-consid="${rOk === "pagas" ? "despesa" : "receita"}|falta"><i class="falta"></i>${fmt(falta)} ${rFalta}</button>` : "";
-  return `<header class="topo">
-      <div class="topo-linha"><h1>Gestor de Finanças</h1><button class="bt-busca" data-busca aria-label="Buscar">${ic("search")}</button></div>
-      <button class="hero" data-aba="relatorios"><span class="hero-t">${ic("wallet")}Saldo em conta <small>hoje</small></span>
-        <b class="num ${saldoReal < 0 ? "neg" : ""}">${fmtR(saldoReal)}</b></button>
-      <div class="resumo dois">
-        <button class="sel-mes" data-mes><small>${a}</small><b>${MES3[m - 1]} ▾</b></button>
-        <div class="col"><span>Despesas do mês</span><b class="num">${fmt(desPagas + desAPagar)}</b>${linhas2(desPagas, desAPagar, "pagas", "a pagar")}</div>
-        <div class="col"><span>Receitas do mês</span><b class="num">${fmt(recOk + recAReceber)}</b>${linhas2(recOk, recAReceber, "recebidas", "a receber")}</div>
-      </div>
-      <div class="mini">
-        ${S.d.contas.some(ehBenef) ? `<button class="faixa-it" data-aba="relatorios"><span>${ic("ticket")}Benefícios</span><b class="num">${fmtR(S.d.contas.filter(ehBenef).reduce((t, c) => t + saldoConta(c.id), 0))}</b></button>` : ""}
-        ${S.d.invest.length ? `<button class="faixa-it" data-abririnv><span>${ic("piggy-bank")}Investido</span><b class="num">${fmtR(totalInvestido())}</b></button>` : ""}
-        ${S.d.cartoes.length ? `<button class="faixa-it" data-fatmes><span>${ic("credit-card")}${fatTot && !fatMes ? "Faturas pagas" : "Faturas a pagar"}</span><b class="num">${fatTot && !fatMes ? "✓ tudo pago" : fmtR(fatMes)}</b></button>` : ""}
-      </div>
-    </header>${faixaInstalar("Instale o app na tela inicial.")}
+  const r = resumoMes(S.mes);
+  // atalhos: benefícios, investido e a fatura do mês (com quantos dias faltam para vencer)
+  const at = [];
+  if (S.d.contas.some(ehBenef)) at.push(`<button class="at" data-irrel="contas"><small>${ic("ticket")}Benefícios</small><b class="num">${fmtR(S.d.contas.filter(ehBenef).reduce((t, c) => t + saldoConta(c.id), 0))}</b></button>`);
+  if (S.d.invest.length) at.push(`<button class="at" data-abririnv><small>${ic("piggy-bank")}Investido</small><b class="num">${fmtR(totalInvestido())}</b></button>`);
+  if (S.d.cartoes.length) {
+    const fs = S.d.cartoes.map((c) => ({ c, f: infoFatura(c.id, S.mes) }));
+    const tot = fs.reduce((t, x) => t + x.f.total, 0), falta = fs.reduce((t, x) => t + x.f.falta, 0);
+    const vencs = fs.filter((x) => x.f.falta > 0).map((x) => vencimentoData(x.c.id, S.mes)).sort();
+    let sub = "";
+    if (vencs.length) {
+      const n = diasAte(vencs[0], hj);
+      sub = n < 0 ? `<em class="atras">venceu dia ${dataCurta(vencs[0])}</em>` : `<em>${n === 0 ? "vence hoje" : n === 1 ? "vence amanhã" : `vence em ${n} dias`}</em>`;
+    } else if (tot) sub = `<em class="ok">✓ paga</em>`;
+    at.push(`<button class="at" data-fatmes><small>${ic("credit-card")}Fatura${S.d.cartoes.length > 1 ? "s" : ""} ${mesCurto(S.mes)}.</small><b class="num">${fmtR(falta)}</b>${sub}</button>`);
+  }
+  const nome = (S.u.nome || "").trim().split(/\s+/)[0];
+  return `<header class="topo-n">
+      <div class="tn-linha"><div class="ola">${saudacao()}${nome ? "," : ""}<b>${esc(nome)}</b></div><button class="tn-bt" data-busca aria-label="Buscar">${ic("search")}</button></div>
+      <button class="tn-saldo" data-irrel="contas"><small>${ic("wallet")}Saldo em conta hoje</small><b class="num">${fmtR(saldoReal)}</b></button>
+      ${faixaMeses(S.mes, "data-mesch")}
+      <div class="vidro">${blocosMes(r)}</div>
+    </header>
+    ${at.length ? `<div class="atalhos n${at.length}">${at.join("")}</div>` : ""}${faixaInstalar("Instale o app na tela inicial.")}
     <div class="conteudo" id="lista">${corpo}</div>`;
 }
 
@@ -848,11 +927,16 @@ function itemLanc(l, comData) {
 }
 
 ligar.inicio = () => {
-  $("[data-mes]").onclick = async () => { const m = await escolherMes(S.mes); if (m) { S.mes = m; desenhar(); } };
+  centralizarMeses();
+  document.querySelectorAll("[data-mesch]").forEach((b) => (b.onclick = async () => {
+    if (b.dataset.mesch === S.mes) { const m = await escolherMes(S.mes); if (m) { S.mes = m; desenhar(); } return; }
+    S.mes = b.dataset.mesch; desenhar();
+  }));
   $("[data-busca]").onclick = abrirBusca;
-  const ai = $("[data-abririnv]"); if (ai) ai.onclick = abrirInvestimentos;
-  const fm = $("[data-fatmes]"); if (fm) fm.onclick = () => abrirFaturasMes(S.mes);
-  document.querySelectorAll("[data-consid]").forEach((b) => (b.onclick = () => { const [t, q] = b.dataset.consid.split("|"); verConsiderado(t, q, S.mes); }));
+  document.querySelectorAll("[data-irrel]").forEach((b) => (b.onclick = () => { S.aba = "relatorios"; S.relAba = b.dataset.irrel; desenhar(); scrollTo(0, 0); }));
+  const ai = $(".atalhos [data-abririnv]"); if (ai) ai.onclick = abrirInvestimentos;
+  const fm = $(".atalhos [data-fatmes]"); if (fm) fm.onclick = () => abrirFaturasMes(S.mes);
+  document.querySelectorAll(".topo-n [data-consid]").forEach((b) => (b.onclick = () => { const [t, q] = b.dataset.consid.split("|"); verConsiderado(t, q, S.mes); }));
   $("#lista").onclick = (e) => {
     const oi = e.target.closest("[data-ordini]");
     if (oi) { try { localStorage.setItem("gf_ordem_inicio", oi.dataset.ordini); } catch {} return desenhar(); }
@@ -860,6 +944,10 @@ ligar.inicio = () => {
     if (po) { const [iv, pl, pm] = po.dataset.progok.split("|"); return confirmarProg(iv, pl, pm || S.mes); }
     const ok = e.target.closest("[data-confirmar]");
     if (ok) return confirmarFixoRapido(ok.dataset.confirmar, S.mes);
+    const pg = e.target.closest("[data-pagar]");
+    if (pg) return pagarFatura(pg.dataset.pagar, S.mes);
+    const vf = e.target.closest("[data-verfat]");
+    if (vf) return verFaturas(vf.dataset.verfat, S.mes);
     const fx = e.target.closest("[data-fixo]");
     if (fx) return abrirEditor(null, { fixo: fixoPorId(fx.dataset.fixo), ym: S.mes });
     const b = e.target.closest("[data-lanc]"); if (b) abrirLanc(b.dataset.lanc);
@@ -880,63 +968,57 @@ function abrirLanc(id) {
 
 /* ----- Gráficos ----- */
 const CORES = ["#111111", "#E0560B", "#8A8A8A", "#F5A372", "#D0D0D0"];
+// cores do anel no topo escuro (as categorias com cor própria usam a delas)
+const CORES_NOITE = ["#FFFFFF", "#34D399", "#F5B94B", "#F59E9E", "#A5B4FC"];
 function telaGraficos() {
-  const g = S.graf;
-  const atual = mesAtual();
-  const abas = [];
-  for (let i = 11; i >= 0; i--) abas.push(somaMes(atual, -i));
-  if (!abas.includes(g.mes)) abas.unshift(g.mes);
-  const rotulo = (ym) => (ym === atual ? "Este mês" : ym === somaMes(atual, -1) ? "Mês passado" : nomeMes(ym));
-
-  const porCat = {};
-  let total = 0;
-  for (const l of S.d.lancs) {
-    if (l.tipo !== g.tipo || !l.data.startsWith(g.mes)) continue;
-    porCat[l.cat] = (porCat[l.cat] || 0) + l.valor; total += l.valor;
-  }
-  const ordem = Object.entries(porCat).sort((a, b) => b[1] - a[1]);
-  let fatias = ordem.slice(0, 4).map(([id, v]) => ({ nome: cat(id).nome, v, cor: cat(id).cor }));
-  const resto = ordem.slice(4).reduce((s, [, v]) => s + v, 0);
-  if (resto) fatias.push({ nome: "Outro", v: resto });
-
-  const pct = (v) => (total ? (v / total) * 100 : 0);
-  const pctTxt = (v) => nf2.format(pct(v)) + "%";
-  let rosca = "", legenda = "";
+  const g = S.graf, ant = somaMes(g.mes, -1);
+  const ordem = gastosPorCat(g.mes, g.tipo), antes = Object.fromEntries(gastosPorCat(ant, g.tipo).map((x) => [x.id, x.v]));
+  const total = ordem.reduce((t, x) => t + x.v, 0);
+  const fatias = ordem.slice(0, 4).map((x) => ({ nome: cat(x.id).nome, v: x.v, cor: cat(x.id).cor }));
+  const resto = ordem.slice(4).reduce((s, x) => s + x.v, 0);
+  if (resto) fatias.push({ nome: "Outros", v: resto });
+  const pctTxt = (v) => (total ? Math.round((v / total) * 100) : 0) + "%";
+  let rosca = "";
   if (total) {
-    const R = 70, C = 2 * Math.PI * R;
-    let acum = 0;
+    const R = 70, C = 2 * Math.PI * R; let acum = 0;
     rosca = fatias.map((f, i) => {
       const frac = f.v / total;
-      const seg = `<circle r="${R}" cx="100" cy="100" fill="none" stroke="${f.cor || CORES[i]}" stroke-width="34"
+      const seg = `<circle r="${R}" cx="100" cy="100" fill="none" stroke="${f.cor || CORES_NOITE[i]}" stroke-width="30"
         stroke-dasharray="${Math.max(0, frac * C - (fatias.length > 1 ? 2 : 0))} ${C}" stroke-dashoffset="${-acum * C}" transform="rotate(-90 100 100)"/>`;
       acum += frac; return seg;
     }).join("");
-    legenda = fatias.map((f, i) => `<div><i style="background:${f.cor || CORES[i]}"></i><span>${esc(f.nome)}</span><b class="num">${pctTxt(f.v)}</b></div>`).join("");
   }
-  const max = ordem.length ? ordem[0][1] : 1;
-  const linhas = ordem.map(([id, v]) => {
-    const c = cat(id);
-    return `<button class="cat-linha" data-vercat="${id}">${bola(c.icone, c.cor)}<div class="meio">
-      <div class="topo2"><span>${esc(c.nome)}</span><b class="num">${fmt(v)}</b></div>
-      <div class="barra"><i style="width:${(v / max) * 72}%"></i><span>${pctTxt(v)}</span></div></div><span class="seta">${ic("chevron-right")}</span></button>`;
-  }).join("");
-
-  return `<header class="cab"><div class="alternar">
-      <button data-gt="despesa" class="${g.tipo === "despesa" ? "ativo" : ""}">Despesas</button>
-      <button data-gt="receita" class="${g.tipo === "receita" ? "ativo" : ""}">Receitas</button></div></header>
-    <div class="meses-rol" id="rol">${abas.map((ym) => `<button data-gm="${ym}" class="${ym === g.mes ? "ativo" : ""}">${rotulo(ym)}</button>`).join("")}</div>
-    <div class="conteudo">${total ? `<div class="rosca-area"><svg viewBox="0 0 200 200">${rosca}
-        <text x="100" y="${g.tipo === "despesa" ? 98 : 98}" text-anchor="middle" font-size="13" fill="#777">Total</text>
-        <text x="100" y="120" text-anchor="middle" font-size="${fmt(total).length > 9 ? 17 : 20}" font-weight="700" fill="#111">${fmt(total)}</text></svg>
-        <div class="legenda">${legenda}</div></div>${linhas}`
-      : `<div class="vazio">${ic("chart-pie")}Nenhuma ${g.tipo === "despesa" ? "despesa" : "receita"} em ${rotulo(g.mes).toLowerCase()}.</div>`}</div>`;
+  const varia = (id, v) => {
+    const a = antes[id];
+    if (!a) return `<small class="var nova">novo</small>`;
+    const p = Math.round(((v - a) / a) * 100);
+    if (p === 0) return `<small class="var">= igual</small>`;
+    const ruim = g.tipo === "despesa" ? p > 0 : p < 0;
+    return `<small class="var ${ruim ? "ruim" : "bom"}">${p > 0 ? "↑" : "↓"} ${Math.abs(p)}%</small>`;
+  };
+  const tot = fmt(total);
+  return `<header class="topo-n graf-topo"><div class="tn-linha"><div class="ola">Para onde foi o dinheiro<b>Gráficos</b></div></div>
+      ${faixaMeses(g.mes, "data-gm")}
+      ${total ? `<div class="g-rosca"><svg viewBox="0 0 200 200"><circle r="70" cx="100" cy="100" fill="none" stroke="rgba(255,255,255,.08)" stroke-width="30"/>${rosca}
+        <text x="100" y="${tot.length > 9 ? 104 : 106}" text-anchor="middle" font-size="${tot.length > 9 ? 19 : 23}" font-weight="700" fill="#fff">${tot}</text>
+        <text x="100" y="${tot.length > 9 ? 124 : 127}" text-anchor="middle" font-size="12" fill="rgba(255,255,255,.65)">${g.tipo === "despesa" ? "despesas" : "receitas"}</text></svg>
+        <div class="g-leg">${fatias.map((f, i) => `<div><i style="background:${f.cor || CORES_NOITE[i]}"></i><span>${esc(f.nome)}</span><b>${pctTxt(f.v)}</b></div>`).join("")}</div></div>`
+        : `<p class="g-vazio">Nenhuma ${g.tipo === "despesa" ? "despesa" : "receita"} em ${nomeMes(g.mes)}.</p>`}
+      <div class="tn-chips"><button data-gt="despesa" class="${g.tipo === "despesa" ? "on" : ""}">Despesas</button><button data-gt="receita" class="${g.tipo === "receita" ? "on" : ""}">Receitas</button></div>
+    </header>
+    <div class="conteudo" id="grafcorpo">${ordem.length ? `<div class="box sem-pad"><h3 class="h3pad">Comparado com ${MESES[Number(ant.slice(5)) - 1]}</h3>
+      ${ordem.map((x) => { const k = cat(x.id); return `<button class="g-linha" data-vercat="${x.id}">${bola(k.icone, k.cor)}<span class="mm"><span class="tt"><span>${esc(k.nome)}</span><b class="num">${fmt(x.v)}</b></span>
+        <span class="g-sub"><span>${pctTxt(x.v)} do total</span>${varia(x.id, x.v)}</span></span><span class="seta">${ic("chevron-right")}</span></button>`; }).join("")}</div>` : ""}</div>`;
 }
 ligar.graficos = () => {
+  centralizarMeses();
   document.querySelectorAll("[data-gt]").forEach((b) => (b.onclick = () => { S.graf.tipo = b.dataset.gt; desenhar(); }));
-  document.querySelectorAll("[data-gm]").forEach((b) => (b.onclick = () => { S.graf.mes = b.dataset.gm; desenhar(); }));
+  document.querySelectorAll("[data-gm]").forEach((b) => (b.onclick = async () => {
+    if (b.dataset.gm === S.graf.mes) { const m = await escolherMes(S.graf.mes); if (m) { S.graf.mes = m; desenhar(); } return; }
+    S.graf.mes = b.dataset.gm; desenhar();
+  }));
   document.querySelectorAll("[data-vercat]").forEach((b) => (b.onclick = () => verCategoria(b.dataset.vercat, S.graf.mes)));
-  const rol = $("#rol"), at = $("#rol .ativo");
-  if (rol && at) rol.scrollLeft = at.offsetLeft - rol.clientWidth / 2 + at.clientWidth / 2;
+  ligarDeslizar($("#grafcorpo"), ["despesa", "receita"], () => S.graf.tipo, (t) => { S.graf.tipo = t; desenhar(); });
 };
 
 /* ----- Detalhe de uma categoria (ao tocar nos gráficos) ----- */
@@ -991,121 +1073,124 @@ function verCategoria(cid, ymIni) {
   verCategoria.repintar = pintar;
 }
 
-/* ----- Comparativo receitas x despesas ----- */
-function dadosPeriodo(filtro) {
-  let rec = 0, des = 0; const pc = { receita: {}, despesa: {} };
-  for (const l of S.d.lancs) {
-    if ((l.tipo !== "receita" && l.tipo !== "despesa") || !filtro(l.data)) continue;
-    if (l.tipo === "receita") rec += l.valor; else des += l.valor;
-    pc[l.tipo][l.cat] = (pc[l.tipo][l.cat] || 0) + l.valor;
+/* ----- Relatórios: abas (Mês · Ano · Contas · Cartões · Investimentos); deslizar o dedo troca de aba ----- */
+const ABAS_REL = [["mes", "Mês", "calendar"], ["ano", "Ano", "chart-line"], ["contas", "Contas", "wallet"], ["cartoes", "Cartões", "credit-card"], ["invest", "Invest.", "piggy-bank"]];
+function gastosPorCat(ym, tipo = "despesa") {
+  const o = {};
+  for (const l of S.d.lancs) if (l.tipo === tipo && l.data.startsWith(ym)) o[l.cat] = (o[l.cat] || 0) + l.valor;
+  return Object.entries(o).sort((a, b) => b[1] - a[1]).map(([id, v]) => ({ id, v }));
+}
+const kpi = (rot, v, sub, cls = "") => `<div class="kp"><small>${rot}</small><b class="num">${v}</b>${sub ? `<em class="${cls}">${sub}</em>` : ""}</div>`;
+function topoRel(aba) {
+  let extra = "";
+  if (aba === "mes" || aba === "cartoes") {
+    extra = faixaMeses(S.cmp.mes, "data-rm");
+    if (aba === "mes") {
+      const r = resumoMes(S.cmp.mes), dif = r.rec - r.des;
+      extra += `<div class="kps">${kpi("Receitas", fmt(r.rec), r.recFalta ? `${fmt(r.recFalta)} a receber` : "tudo recebido", "verde")}
+        ${kpi("Despesas", fmt(r.des), r.desAPagar ? `${fmt(r.desAPagar)} a pagar` : "nada a pagar", "amarelo")}
+        ${kpi("Resultado", `${dif < 0 ? "− " : ""}${fmt(Math.abs(dif))}`, dif < 0 ? "gastou mais" : "sobrou", dif < 0 ? "verm" : "verde")}</div>`;
+    }
+  } else if (aba === "ano") {
+    let tr = 0, td = 0;
+    for (let i = 1; i <= 12; i++) { const r = resumoMes(`${S.relAno}-${p2(i)}`); tr += r.rec; td += r.des; }
+    extra = `<div class="tn-ano"><button data-ano="-1">${ic("chevron-left")}</button><span>${S.relAno}</span><button data-ano="1">${ic("chevron-right")}</button></div>
+      <div class="kps">${kpi("Receitas", fmt(tr))}${kpi("Despesas", fmt(td))}${kpi("Resultado", `${tr - td < 0 ? "− " : ""}${fmt(Math.abs(tr - td))}`, tr - td < 0 ? "gastou mais" : "sobrou", tr - td < 0 ? "verm" : "verde")}</div>`;
+  } else if (aba === "contas") {
+    const normais = S.d.contas.filter((c) => !ehBenef(c));
+    extra = `<div class="tn-saldo2"><small>Total em conta</small><b class="num">${fmtR(normais.reduce((s, c) => s + saldoConta(c.id), 0))}</b></div>`;
+  } else if (aba === "invest" && S.d.invest.length) {
+    extra = `<div class="kps dois">${kpi("Investido", fmtR(totalInvestido()))}${kpi("Patrimônio", fmtR(patrimonio()), "contas + investimentos")}</div>`;
   }
-  const ord = (o) => Object.entries(o).sort((a, b) => b[1] - a[1]).map(([id, v]) => ({ id, v }));
-  const lr = ord(pc.receita), ld = ord(pc.despesa);
-  return { rec, des, topRec: lr[0] || null, topDes: ld[0] || null, listaRec: lr, listaDes: ld };
+  return `<header class="topo-n rel-topo"><div class="tn-linha"><div class="ola">Seus números<b>Relatórios</b></div></div>
+    <div class="rel-abas" data-relabas>${ABAS_REL.map(([k, rot, ico]) => `<button data-rel="${k}" class="${k === aba ? "on" : ""}">${ic(ico)}${rot}</button>`).join("")}</div>
+    ${extra}</header>`;
 }
-
-// Lista pequena com a porcentagem de cada categoria
-function listaPct(lista, total, cls) {
-  if (!lista.length) return `<div class="pct-col"></div>`;
-  const max = lista[0].v;
-  return `<div class="pct-col">${lista.map((x) => {
-    const k = cat(x.id), p = total ? (x.v / total) * 100 : 0;
-    return `<div class="pct-l" data-vercat="${x.id}"><div class="pct-t"><span>${esc(k.nome)}</span><b class="num">${p < 1 && p > 0 ? "<1" : Math.round(p)}%</b></div>
-      <div class="pct-b"><i class="${cls}" style="width:${(x.v / max) * 100}%${k.cor ? `;background:${k.cor}` : ""}"></i></div></div>`;
-  }).join("")}</div>`;
+function relMes() {
+  const ym = S.cmp.mes;
+  const meses = Array.from({ length: 6 }, (_, i) => somaMes(ym, i - 5)).map((m) => { const r = resumoMes(m); return { m, r: r.rec, d: r.des }; });
+  const mx = Math.max(1, ...meses.map((x) => Math.max(x.r, x.d)));
+  const cats = gastosPorCat(ym), max = cats.length ? cats[0].v : 1;
+  return `<div class="box"><h3>Últimos 6 meses<span><i class="lg r"></i>Receitas <i class="lg d"></i>Despesas</span></h3>
+      <div class="grafb">${meses.map((x) => `<button class="gm ${x.m === ym ? "on" : ""}" data-cm="${x.m}"><span class="p"><i class="r" style="height:${(x.r / mx) * 100}%"></i><i class="d" style="height:${(x.d / mx) * 100}%"></i></span><small>${mesCurto(x.m)}</small></button>`).join("")}</div></div>
+    <div class="box"><h3>Onde mais gastou<button data-vertodas>ver todas ›</button></h3>
+      ${cats.length ? cats.slice(0, 5).map((x) => { const k = cat(x.id); return `<button class="cl" data-vercat="${x.id}">${bola(k.icone, k.cor)}<span class="mm"><span class="tt"><span>${esc(k.nome)}</span><b class="num">${fmt(x.v)}</b></span><span class="br"><i style="width:${(x.v / max) * 100}%${k.cor ? `;background:${k.cor}` : ""}"></i></span></span></button>`; }).join("")
+        : `<p class="vazio" style="padding:14px">Nenhuma despesa em ${nomeMes(ym)}.</p>`}</div>`;
 }
-
-function blocoComparativo() {
-  const c = S.cmp, mes = c.modo === "mes";
-  const pref = mes ? c.mes : String(c.ano);
-  const d = dadosPeriodo((dt) => dt.startsWith(pref));
-  const titulo = mes ? `${MESES[Number(c.mes.slice(5)) - 1]} ${c.mes.slice(0, 4)}` : String(c.ano);
-  const max = Math.max(d.rec, d.des, 1);
-  const pct = (a, b) => (b ? Math.round((a / b) * 100) : 0);
-  const dif = d.rec - d.des;
-
-  let resultado = "";
-  if (d.rec || d.des) {
-    resultado = dif >= 0
-      ? `<div class="cmp-res">Sobrou <b class="num">${fmtR(dif)}</b>${d.rec ? ` · ${pct(dif, d.rec)}% da receita` : ""}</div>`
-      : `<div class="cmp-res neg">Gastou <b class="num">${fmtR(-dif)}</b> a mais do que recebeu</div>`;
-  }
-
-  const pesa = (rot, top, total, extra) => {
-    if (!top) return `<div class="pesa vazio-p"><small>${rot}</small><span>Nenhum lançamento</span></div>`;
-    const k = cat(top.id);
-    return `<div class="pesa"><small>${rot}</small><div class="pesa-l">${bola(k.icone, k.cor)}<b>${esc(k.nome)}</b></div>
-      <div class="pesa-v"><span class="num">${fmt(top.v)}</span><strong class="num">${pct(top.v, total)}%</strong></div>
-      ${extra ? `<p>${extra}</p>` : ""}</div>`;
-  };
-  const extraDes = d.topDes && d.rec ? `Sozinha, consome <b>${pct(d.topDes.v, d.rec)}%</b> da sua receita.` : "";
-  const extraRec = d.topRec ? `É <b>${pct(d.topRec.v, d.rec)}%</b> de tudo que entrou.` : "";
-
-  // mini gráfico: 6 meses até o mês escolhido, ou os 12 meses do ano
-  const meses = mes ? Array.from({ length: 6 }, (_, i) => somaMes(c.mes, i - 5)) : Array.from({ length: 12 }, (_, i) => `${c.ano}-${p2(i + 1)}`);
-  const serie = meses.map((ym) => ({ ym, ...dadosPeriodo((dt) => dt.startsWith(ym)) }));
-  const mx = Math.max(1, ...serie.map((x) => Math.max(x.rec, x.des)));
-  const barras = serie.map((x) => `<button class="mb-col ${mes && x.ym === c.mes ? "sel" : ""}" data-cm="${x.ym}" title="${nomeMes(x.ym)}">
-      <span class="mb-par"><i class="r" style="height:${(x.rec / mx) * 100}%"></i><i class="d" style="height:${(x.des / mx) * 100}%"></i></span>
-      <small>${MES3[Number(x.ym.slice(5)) - 1].replace(".", "")}</small></button>`).join("");
-
-  return `<section class="secao"><h2>Receitas x Despesas</h2><div class="cartao-box cmp">
-    <div class="alternar" style="margin:14px auto 0;max-width:220px"><button data-cmodo="mes" class="${mes ? "ativo" : ""}">Mês</button><button data-cmodo="ano" class="${mes ? "" : "ativo"}">Ano</button></div>
-    <div class="ano-nav"><button data-cnav="-1">${ic("chevron-left")}</button><span style="text-transform:capitalize">${titulo}</span><button data-cnav="1">${ic("chevron-right")}</button></div>
-    <div class="cmp-barras">
-      <div class="cmp-l"><span>Receitas</span><div class="cmp-trilho"><i class="r" style="width:${(d.rec / max) * 100}%"></i></div><b class="num">${fmt(d.rec)}</b></div>
-      <div class="cmp-l"><span>Despesas</span><div class="cmp-trilho"><i class="d" style="width:${(d.des / max) * 100}%"></i></div><b class="num">${fmt(d.des)}</b></div>
-    </div>${resultado}
-    <div class="pesa-grade">${pesa("Despesa que mais pesa", d.topDes, d.des, extraDes)}${pesa("Receita que mais pesa", d.topRec, d.rec, extraRec)}</div>
-    <div class="pct-grade">${listaPct(d.listaDes, d.des, "d")}${listaPct(d.listaRec, d.rec, "r")}</div>
-    <div class="mini-barras">${barras}</div>
-    <div class="mb-leg"><span><i class="r"></i>Receitas</span><span><i class="d"></i>Despesas</span></div>
-  </div></section>`;
-}
-
-/* ----- Relatórios ----- */
-function telaRelatorios() {
-  const linhaConta = (c) => `<div class="linha-opc"><span class="bola">${ic(icConta(c))}</span><span class="meio">${esc(c.nome)}${ehBenef(c) ? "<small>Cartão de benefício</small>" : ""}</span><b class="num">${fmtR(saldoConta(c.id))}</b></div>`;
-  const normais = S.d.contas.filter((c) => !ehBenef(c)), benefs = S.d.contas.filter(ehBenef);
-  const contas = normais.map(linhaConta).join("") + (benefs.length
-    ? `<div class="total-linha"><span>Total em conta</span><span class="num">${fmtR(normais.reduce((s, c) => s + saldoConta(c.id), 0))}</span></div>` + benefs.map(linhaConta).join("")
-      + `<div class="total-linha"><span>Total em benefícios</span><span class="num">${fmtR(benefs.reduce((s, c) => s + saldoConta(c.id), 0))}</span></div>` : "");
-  const totalContas = benefs.length ? null : S.d.contas.reduce((s, c) => s + saldoConta(c.id), 0);
-
-  const ano = S.relAno;
-  let tR = 0, tD = 0, tS = 0;
-  const linhasAno = MESES.map((m, i) => {
-    const ym = `${ano}-${p2(i + 1)}`, t = totaisMes(ym);
-    tR += t.rec; tD += t.des; tS += t.saldo;
-    return `<tr class="${ym === mesAtual() ? "atual" : ""}"><td>${m.slice(0, 3)}</td><td class="num">${fmt(t.rec)}</td><td class="num">${fmt(t.des)}</td><td class="num">${fmt(t.saldo)}</td></tr>`;
+function relAno() {
+  const ano = S.relAno; let comecou = false, tR = 0, tD = 0;
+  const linhas = MESES.map((m, i) => {
+    const ym = `${ano}-${p2(i + 1)}`, r = resumoMes(ym), dif = r.rec - r.des;
+    tR += r.rec; tD += r.des;
+    if (!comecou && !r.rec && !r.des && ym < mesAtual()) return "";
+    comecou = true;
+    return `<tr class="${ym === mesAtual() ? "atual" : ""}" data-cm="${ym}"><td>${m.slice(0, 3)}</td><td class="num">${r.rec ? fmt(r.rec) : "—"}</td><td class="num">${r.des ? fmt(r.des) : "—"}</td><td class="num ${dif < 0 ? "neg" : ""}">${r.rec || r.des ? (dif < 0 ? "− " : "") + fmt(Math.abs(dif)) : "—"}</td></tr>`;
   }).join("");
-
-  return `<header class="cab"><h1>Relatórios</h1></header><div class="conteudo">${blocoComparativo()}
-    <section class="secao"><h2>Saldo das contas</h2><div class="cartao-box">${contas}
-      ${totalContas === null ? "" : `<div class="total-linha"><span>Total</span><span class="num">${fmtR(totalContas)}</span></div>`}</div></section>
-    <section class="secao"><h2>Investimentos e patrimônio</h2><div class="cartao-box">${S.d.invest.length
-      ? `<div class="linha-opc"><span class="bola">${ic("trending-up")}</span><span class="meio">Patrimônio total<small>Contas + investimentos</small></span><b class="num">${fmtR(patrimonio())}</b></div>
-         <div class="linha-opc"><span class="bola">${ic("piggy-bank")}</span><span class="meio">Investido<small>Rendeu ${sinalR(movsPeriodo(mesAtual().slice(0, 4)).rend)} em ${mesAtual().slice(0, 4)}</small></span><b class="num">${fmtR(totalInvestido())}</b></div>
-         <button class="linha-opc" data-abririnv><span class="bola">${ic("chart-line")}</span><span class="meio">Ver investimentos<small>Evolução, metas e onde está seu dinheiro</small></span><span class="seta">${ic("chevron-right")}</span></button>`
-      : `<button class="linha-opc" data-abririnv><span class="bola">${ic("plus")}</span><span class="meio">Começar a acompanhar investimentos<small>Aplicações não contam como despesa. Veja seu patrimônio crescer.</small></span></button>`}</div></section>
-    <section class="secao"><h2>Resumo do ano</h2><div class="cartao-box">
-      <div class="ano-nav"><button data-ano="-1">${ic("chevron-left")}</button><span>${ano}</span><button data-ano="1">${ic("chevron-right")}</button></div>
-      <table class="ano"><tr><th>Mês</th><th>Receitas</th><th>Despesas</th><th>Saldo</th></tr>${linhasAno}
-      <tr class="tot"><td>Total</td><td class="num">${fmt(tR)}</td><td class="num">${fmt(tD)}</td><td class="num">${fmt(tS)}</td></tr></table></div>
-      <p style="font-size:12.5px;color:#777;margin:10px 2px 0">Saldo = receitas − despesas pagas com saldo − pagamentos de fatura. Compras no cartão entram em “Despesas”, mas só saem do saldo quando a fatura é paga.</p></section>
-    </div>`;
+  return `<div class="box"><table class="ano"><tr><th>Mês</th><th>Receitas</th><th>Despesas</th><th>Resultado</th></tr>${linhas}
+    <tr class="tot"><td>Total</td><td class="num">${fmt(tR)}</td><td class="num">${fmt(tD)}</td><td class="num">${tR - tD < 0 ? "− " : ""}${fmt(Math.abs(tR - tD))}</td></tr></table></div>
+    <p class="rel-nota">Despesas pela data da compra (compras no cartão contam no mês em que foram feitas). Toque num mês para ver os detalhes.</p>`;
+}
+function relContas() {
+  const linha = (c) => `<div class="linha-opc"><span class="bola">${ic(icConta(c))}</span><span class="meio">${esc(c.nome)}${ehBenef(c) ? "<small>Cartão de benefício</small>" : ""}</span><b class="num">${fmtR(saldoConta(c.id))}</b></div>`;
+  const normais = S.d.contas.filter((c) => !ehBenef(c)), benefs = S.d.contas.filter(ehBenef);
+  const tot = (a) => a.reduce((s, c) => s + saldoConta(c.id), 0);
+  return `<div class="box sem-pad">${normais.map(linha).join("")}<div class="total-linha"><span>Total em conta</span><span class="num">${fmtR(tot(normais))}</span></div></div>
+    ${benefs.length ? `<div class="box sem-pad">${benefs.map(linha).join("")}<div class="total-linha"><span>Total em benefícios</span><span class="num">${fmtR(tot(benefs))}</span></div></div>` : ""}`;
+}
+function relCartoes() {
+  if (!S.d.cartoes.length) return `<p class="vazio">${ic("credit-card")}Nenhum cartão de crédito cadastrado.<br>Cadastre em Perfil → Cartões.</p>`;
+  const ym = S.cmp.mes, fs = S.d.cartoes.map((c) => ({ c, f: infoFatura(c.id, ym) }));
+  const etq = (f) => f.total === 0 ? `<span class="etiqueta">Sem compras</span>` : f.falta === 0 ? `<span class="etiqueta paga">Paga</span>` : `<span class="etiqueta">Falta ${fmt(f.falta)}</span>`;
+  return `<div class="box sem-pad"><h3 class="h3pad">Faturas que vencem em ${nomeMes(ym)}</h3>${fs.map((x) => `<button class="linha-opc" data-verfat="${x.c.id}"><span class="bola">${ic("credit-card")}</span>
+      <span class="meio">${esc(x.c.nome)}<small>vence ${dataCurta(vencimentoData(x.c.id, ym))} · ${x.f.itens.length} compra(s)</small></span>
+      <span class="fat-dir"><b class="num">${fmtR(x.f.total)}</b>${etq(x.f)}</span></button>`).join("")}
+    <div class="total-linha"><span>Total das faturas</span><span class="num">${fmtR(fs.reduce((t, x) => t + x.f.total, 0))}</span></div></div>
+    <button class="btn contorno" style="margin:12px 0 0" data-fatmes>Pagar ou ver faturas</button>
+    <div class="box">${usoCartaoMensal(ym) || `<p class="vazio" style="padding:10px">Nenhuma compra no cartão ainda.</p>`}</div>`;
+}
+function relInvest() {
+  return `<div class="box sem-pad">${S.d.invest.length
+    ? `<div class="linha-opc"><span class="bola">${ic("piggy-bank")}</span><span class="meio">Investido<small>Rendeu ${sinalR(movsPeriodo(mesAtual().slice(0, 4)).rend)} em ${mesAtual().slice(0, 4)}</small></span><b class="num">${fmtR(totalInvestido())}</b></div>
+       <button class="linha-opc" data-abririnv><span class="bola">${ic("chart-line")}</span><span class="meio">Ver investimentos<small>Evolução, metas e onde está seu dinheiro</small></span><span class="seta">${ic("chevron-right")}</span></button>`
+    : `<button class="linha-opc" data-abririnv><span class="bola">${ic("plus")}</span><span class="meio">Começar a acompanhar investimentos<small>Aplicações não contam como despesa. Veja seu patrimônio crescer.</small></span></button>`}</div>`;
+}
+function telaRelatorios() {
+  const aba = ABAS_REL.some(([k]) => k === S.relAba) ? S.relAba : "mes";
+  const corpo = { mes: relMes, ano: relAno, contas: relContas, cartoes: relCartoes, invest: relInvest }[aba]();
+  return `${topoRel(aba)}<div class="conteudo rel-corpo" id="relcorpo">${corpo}
+    <p class="rel-dica">${ic("arrow-left-right")}Deslize para o lado para trocar de relatório</p></div>`;
+}
+// Deslizar o dedo para o lado numa área troca de aba
+function ligarDeslizar(el, abas, atual, ir) {
+  if (!el) return;
+  let x0 = null, y0 = 0;
+  el.addEventListener("touchstart", (e) => { if (e.touches.length !== 1 || e.target.closest("[data-rolmeses], [data-relabas], .grafb")) { x0 = null; return; } x0 = e.touches[0].clientX; y0 = e.touches[0].clientY; }, { passive: true });
+  el.addEventListener("touchend", (e) => {
+    if (x0 === null) return;
+    const dx = e.changedTouches[0].clientX - x0, dy = e.changedTouches[0].clientY - y0; x0 = null;
+    if (Math.abs(dx) < 60 || Math.abs(dx) < Math.abs(dy) * 1.5) return;
+    const i = abas.indexOf(atual()), j = i + (dx < 0 ? 1 : -1);
+    if (j >= 0 && j < abas.length) ir(abas[j]);
+  }, { passive: true });
 }
 ligar.relatorios = () => {
-  document.querySelectorAll("[data-abririnv]").forEach((b) => (b.onclick = abrirInvestimentos));
-  document.querySelectorAll("[data-cmodo]").forEach((b) => (b.onclick = () => { S.cmp.modo = b.dataset.cmodo; if (S.cmp.modo === "ano") S.cmp.ano = Number(S.cmp.mes.slice(0, 4)); desenhar(); }));
-  document.querySelectorAll("[data-cnav]").forEach((b) => (b.onclick = () => {
-    const n = Number(b.dataset.cnav);
-    if (S.cmp.modo === "mes") S.cmp.mes = somaMes(S.cmp.mes, n); else S.cmp.ano += n;
-    desenhar();
+  centralizarMeses();
+  const rol = $("[data-relabas]"), at = rol && rol.querySelector(".on");
+  if (at) rol.scrollLeft = at.offsetLeft - rol.clientWidth / 2 + at.clientWidth / 2;
+  const ir = (k) => { S.relAba = k; desenhar(); };
+  document.querySelectorAll("[data-rel]").forEach((b) => (b.onclick = () => ir(b.dataset.rel)));
+  ligarDeslizar($("#relcorpo"), ABAS_REL.map(([k]) => k), () => S.relAba || "mes", ir);
+  document.querySelectorAll("[data-rm]").forEach((b) => (b.onclick = async () => {
+    if (b.dataset.rm === S.cmp.mes) { const m = await escolherMes(S.cmp.mes); if (m) { S.cmp.mes = m; desenhar(); } return; }
+    S.cmp.mes = b.dataset.rm; desenhar();
   }));
-  document.querySelectorAll("[data-vercat]").forEach((b) => (b.onclick = () => verCategoria(b.dataset.vercat, S.cmp.modo === "mes" ? S.cmp.mes : mesAtual())));
-  document.querySelectorAll("[data-cm]").forEach((b) => (b.onclick = () => { S.cmp.mes = b.dataset.cm; S.cmp.modo = "mes"; desenhar(); }));
   document.querySelectorAll("[data-ano]").forEach((b) => (b.onclick = () => { S.relAno += Number(b.dataset.ano); desenhar(); }));
+  document.querySelectorAll("[data-cm]").forEach((b) => (b.onclick = () => { S.cmp.mes = b.dataset.cm; S.relAba = "mes"; desenhar(); }));
+  document.querySelectorAll("[data-vercat]").forEach((b) => (b.onclick = () => verCategoria(b.dataset.vercat, S.cmp.mes)));
+  document.querySelectorAll("[data-vertodas]").forEach((b) => (b.onclick = () => { S.aba = "graficos"; S.graf.tipo = "despesa"; S.graf.mes = S.cmp.mes; desenhar(); scrollTo(0, 0); }));
+  document.querySelectorAll("[data-abririnv]").forEach((b) => (b.onclick = abrirInvestimentos));
+  document.querySelectorAll("[data-verfat]").forEach((b) => (b.onclick = () => verFaturas(b.dataset.verfat, S.cmp.mes)));
+  document.querySelectorAll("[data-fatmes]").forEach((b) => (b.onclick = () => abrirFaturasMes(S.cmp.mes)));
 };
 
 function verFaturas(cid, mesIni) {
@@ -1196,18 +1281,22 @@ function abrirFaturasMes(mesIni) {
 function verConsiderado(tipo, qual, ym) {
   const el = abrirCamada(`<div data-considc></div>`, { aoFechar: () => desenhar() });
   const pintar = () => {
-    const hj = hoje(), des = tipo === "despesa", ok = qual === "ok", jaFoi = criarJaFoi(hj);
-    const lancs = S.d.lancs.filter((l) => l.tipo === tipo && l.data.startsWith(ym) && (ok ? jaFoi(l) : !jaFoi(l)))
+    const hj = hoje(), des = tipo === "despesa", ok = qual === "ok", cart = qual === "cartao", jaFoi = criarJaFoi(hj);
+    // "a pagar" = vence neste mês; "cartao" = compras que só vencem numa fatura seguinte
+    const passa = (l) => ok ? jaFoi(l) : !jaFoi(l) && (!des || vaiPraFaturaSeguinte(l, ym) === cart);
+    const lancs = S.d.lancs.filter((l) => l.tipo === tipo && l.data.startsWith(ym) && passa(l))
       .sort((x, y) => (ok ? y.data.localeCompare(x.data) : x.data.localeCompare(y.data)) || x.id.localeCompare(y.id));
-    const fixos = ok ? [] : fixosPendentes(ym).filter((f) => f.tipo === tipo);
+    const fixos = ok ? [] : fixosPendentes(ym).filter((f) => f.tipo === tipo && (!des || fixoNaFaturaSeguinte(f, ym) === cart));
     const invOk = !des && ok ? S.d.lancs.filter((l) => l.tipo === "resg" && l.prog && l.data.startsWith(ym)).sort((x, y) => y.data.localeCompare(x.data)) : [];
     const invFalta = !des && !ok ? progAReceber(ym) : [];
     const total = lancs.reduce((t, l) => t + l.valor, 0) + fixos.reduce((t, f) => t + f.valor, 0) + invOk.reduce((t, l) => t + l.valor, 0) + invFalta.reduce((t, x) => t + x.valor, 0);
     const noCartao = lancs.filter((l) => l.cartao);
-    const titulo = des ? (ok ? "Despesas pagas" : "Despesas a pagar") : (ok ? "Receitas recebidas" : "Receitas a receber");
-    const regra = ok
+    const titulo = cart ? "Compras para as próximas faturas" : des ? (ok ? "Despesas pagas" : "Despesas a pagar") : (ok ? "Receitas recebidas" : "Receitas a receber");
+    const regra = cart
+      ? `Compras no cartão feitas em ${nomeMes(ym)} que só vencem numa <b>fatura dos próximos meses</b>. Elas contam nas despesas de ${nomeMes(ym)} (mês da compra), mas o dinheiro só sai quando você pagar aquela fatura.`
+      : ok
       ? `Lançamentos de ${des ? "despesa" : "receita"} de ${nomeMes(ym)} com data <b>até hoje (${dataCurta(hj)})</b>.${des ? "" : " Inclui as parcelas de investimentos/empréstimos recebidas no mês."}${des ? " Compras no cartão só entram aqui depois que a fatura delas for paga." : ""}`
-      : `Lançamentos de ${des ? "despesa" : "receita"} de ${nomeMes(ym)} com data <b>depois de hoje (${dataCurta(hj)})</b>${des ? ", como parcelas futuras," : ""} e os <b>fixos ainda não confirmados</b> do mês.${des ? "" : " Inclui as <b>parcelas de investimentos/empréstimos</b> ainda não recebidas (e as atrasadas)."}${des ? " Inclui as <b>compras no cartão cuja fatura ainda não foi paga</b>, mesmo com data passada." : ""}`;
+      : `Lançamentos de ${des ? "despesa" : "receita"} de ${nomeMes(ym)} com data <b>depois de hoje (${dataCurta(hj)})</b>${des ? ", como parcelas futuras," : ""} e os <b>fixos ainda não confirmados</b> do mês.${des ? "" : " Inclui as <b>parcelas de investimentos/empréstimos</b> ainda não recebidas (e as atrasadas)."}${des ? " Inclui as <b>compras no cartão cuja fatura vence neste mês</b> e ainda não foi paga. As que vão para faturas seguintes ficam separadas, com o ícone do cartão." : ""}`;
     const secao = (rot, v, html) => html ? `<div class="dia-cab"><span>${rot}</span><span class="num">${fmt(v)}</span></div>${html}` : "";
     const htmlFixos = fixos.map((f) => { const c = cat(f.cat); return `<div class="item pendente"><button class="pend-abrir" data-fixo="${f.id}">${bola(c.icone, c.cor)}
         <span class="meio"><div>${esc(f.nota || c.nome)}</div><small>dia ${dataCurta(dataFixo(f, ym))} · ${ic("repeat")}Fixo a confirmar${f.cartao ? " · " + esc(cartao(f.cartao).nome) : ""}</small></span>
@@ -1215,7 +1304,7 @@ function verConsiderado(tipo, qual, ym) {
     $("[data-considc]", el).innerHTML = `<h2>${titulo}</h2>
       <p style="text-align:center;color:#777;margin:-6px 0 4px;font-size:14px">${nomeMes(ym)}</p>
       <div style="text-align:center;font-size:28px;font-weight:700" class="num">${fmtR(total)}</div>
-      <p class="consid-regra">${regra}${des && noCartao.length ? `<br>Destas, <b>${fmtR(noCartao.reduce((t, l) => t + l.valor, 0))}</b> são compras no cartão${ok ? " (fatura já paga)" : " (fatura ainda não paga)"}.` : ""}</p>
+      <p class="consid-regra">${regra}${des && !cart && noCartao.length ? `<br>Destas, <b>${fmtR(noCartao.reduce((t, l) => t + l.valor, 0))}</b> são compras no cartão${ok ? " (fatura já paga)" : " (fatura ainda não paga)"}.` : ""}</p>
       <div style="margin:0 -18px">${secao("Lançamentos", lancs.reduce((t, l) => t + l.valor, 0), lancs.map((l) => itemLanc(l, true)).join(""))}
       ${secao("Fixos a confirmar", fixos.reduce((t, f) => t + f.valor, 0), htmlFixos)}
       ${secao("Investimentos recebidos", invOk.reduce((t, l) => t + l.valor, 0), invOk.map((l) => itemLanc(l, true)).join(""))}
