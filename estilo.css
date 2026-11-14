@@ -827,3 +827,20 @@ i.lg.r, .gm i.r { background: #34D399; } i.lg.d, .gm i.d { background: var(--lar
 .gi-rend small { font-size: 10px; color: #999; }
 .gi-graf { position: relative; margin-top: 12px; } .gi-graf .gi-linha { margin-top: 0; }
 .gi-ponto { margin-top: 0; transform: none; }
+
+/* ===== v3.18: fixos no comparativo ===== */
+i.lg.v, .gm i.v { background: #C9CED6; }
+.gm .p.pilha { flex-direction: column; justify-content: flex-end; gap: 0; }
+.gm .p.pilha i { width: 14px; border-radius: 0; }
+.gm .p.pilha i:first-child { border-radius: 4px 4px 0 0; }
+.fx-tab { font-size: 13px; }
+.fx-tab td, .fx-tab th { padding: 8px 4px; }
+.fx-tab .fx-nome { max-width: 110px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left; }
+.fx-prev { color: #9AA0A8; }
+.fx-p { color: #9AA0A8; font-size: 11.5px; }
+.fx-resumo { display: flex; align-items: center; gap: 10px; width: 100%; text-align: left; }
+.fx-resumo b { display: block; font-size: 15px; }
+.fx-resumo small { display: block; font-size: 12px; color: #888; margin-top: 2px; }
+.fx-ver { display: flex; align-items: center; gap: 2px; color: var(--laranja-graf); font-size: 13px; font-weight: 600; white-space: nowrap; }
+.fx-ver svg.ic { width: 16px; height: 16px; }
+.box table.ano.fx-tab { margin: 0 -14px -14px; width: calc(100% + 28px); }

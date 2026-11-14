@@ -1,7 +1,7 @@
 "use strict";
 /* Gestor de Finanças — app instalável, dados guardados só no aparelho e criptografados. */
 
-const VERSAO_APP = "3.17";
+const VERSAO_APP = "3.18";
 const $ = (s, el = document) => el.querySelector(s);
 const esc = (t) => String(t ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const ic = (n) => `<svg class="ic" viewBox="0 0 24 24">${ICONES[n] || ICONES["circle-ellipsis"]}</svg>`;
@@ -1367,9 +1367,57 @@ function relInv(P, det) {
   return { k, corpo };
 }
 
+/* --- Fixos (recorrentes) no comparativo --- */
+// Valor de um fixo num mês: o que foi confirmado; se ainda não, o valor cadastrado (previsto)
+function valorFixoMes(f, ym) {
+  const ls = S.d.lancs.filter((l) => l.fixo === f.id && (l.fixoMes || l.data.slice(0, 7)) === ym);
+  if (ls.length) return { v: somaV(ls), st: "ok" };
+  if (S.d.pulados.includes(f.id + "|" + ym)) return { v: 0, st: "pulou" };
+  if (f.inicio <= ym && (!f.fim || ym < f.fim)) return { v: f.valor, st: "prev" };
+  return null;
+}
+const totFixos = (ym, tipo) => S.d.fixos.filter((f) => f.tipo === tipo).reduce((t, f) => { const x = valorFixoMes(f, ym); return t + (x ? x.v : 0); }, 0);
+function relFixos(P, meses) {
+  if (!S.d.fixos.length) return { k: "", corpo: `<p class="vazio">${ic("repeat")}Nenhum lançamento fixo cadastrado.<br>Cadastre em Perfil → Lançamentos recorrentes.</p>` };
+  const am = mesAtual(), ref = P.mes || (meses.includes(am) ? am : meses[meses.length - 1]);
+  const cols = [somaMes(ref, -2), somaMes(ref, -1), ref];
+  const desF = totFixos(ref, "despesa"), desAnt = totFixos(somaMes(ref, -1), "despesa"), recF = totFixos(ref, "receita");
+  const desTot = resumoMes(ref).des, peso = desTot ? Math.round((desF / desTot) * 100) : 0;
+  const k = `<div class="kps">${kpi(`Fixos ${mesCurto(ref)}.`, fmt(desF), desAnt ? `${desF > desAnt ? "↑" : desF < desAnt ? "↓" : "="} vs ${mesCurto(somaMes(ref, -1))}.` : "despesas fixas", desF > desAnt ? "verm" : "verde")}
+    ${kpi("Peso nos gastos", `${peso}%`, `de ${fmt(desTot)}`)}${kpi("Receitas fixas", fmt(recF), "salário etc.", "verde")}</div>`;
+  // barras: fixos x variáveis por mês
+  let comecou = false;
+  const serie = meses.map((m) => { const d = resumoMes(m).des, fx = totFixos(m, "despesa"); return { m, fx: Math.min(fx, d || fx), vr: Math.max(0, d - fx) }; })
+    .filter((x) => { if (!comecou && !x.fx && !x.vr && x.m < am) return false; comecou = true; return true; });
+  const mx = Math.max(1, ...serie.map((x) => x.fx + x.vr));
+  let corpo = `<div class="box"><h3>Fixos x variáveis<span><i class="lg d"></i>Fixos <i class="lg v"></i>Variáveis</span></h3>
+    <div class="grafb gb-mini">${serie.map((x) => `<button class="gm ${x.m === ref ? "on" : ""}" data-irmes="${x.m}"><span class="p pilha"><i class="v" style="height:${(x.vr / mx) * 100}%"></i><i class="d" style="height:${(x.fx / mx) * 100}%"></i></span><small>${mesCurto(x.m)}</small></button>`).join("")}</div></div>`;
+  // tabela: cada fixo nos últimos 3 meses
+  const linha = (f) => {
+    const vs = cols.map((m) => valorFixoMes(f, m));
+    if (vs.every((x) => !x)) return "";
+    const a = vs[1] ? vs[1].v : 0, b = vs[2] ? vs[2].v : 0;
+    const dif = a && b ? Math.round(((b - a) / a) * 100) : null;
+    const cel = (x) => !x ? `<td class="num">—</td>` : x.st === "pulou" ? `<td class="num fx-p">pulou</td>` : `<td class="num ${x.st === "prev" ? "fx-prev" : ""}">${fmt(x.v)}</td>`;
+    const c = cat(f.cat);
+    return `<tr><td class="fx-nome">${esc(f.nota || c.nome)}</td>${vs.map(cel).join("")}<td class="num">${dif === null || dif === 0 ? `<small class="var">${dif === 0 ? "=" : ""}</small>` : `<small class="var ${(dif > 0) === (f.tipo === "despesa") ? "ruim" : "bom"}">${dif > 0 ? "↑" : "↓"}${Math.abs(dif)}%</small>`}</td></tr>`;
+  };
+  const tabela = (tipo, tit) => {
+    const fs = S.d.fixos.filter((f) => f.tipo === tipo), rows = fs.map(linha).join("");
+    if (!rows) return "";
+    const tots = cols.map((m) => totFixos(m, tipo));
+    return `<div class="box"><h3>${tit}<span>${fs.length} fixo(s)</span></h3><table class="ano fx-tab"><tr><th></th>${cols.map((m) => `<th>${mesCurto(m)}</th>`).join("")}<th></th></tr>${rows}
+      <tr class="tot"><td>Total</td>${tots.map((t) => `<td class="num">${fmt(t)}</td>`).join("")}<td></td></tr></table></div>`;
+  };
+  corpo += tabela("despesa", "Despesas fixas") + tabela("receita", "Receitas fixas");
+  corpo += `<p class="rel-nota">Valores em <span class="fx-prev">cinza</span> ainda não foram confirmados (é o valor cadastrado). A seta compara ${mesCurto(ref)}. com ${mesCurto(somaMes(ref, -1))}.</p>`;
+  return { k, corpo };
+}
+
 /* --- 5. Comparar meses --- */
 function relComp(P, det) {
   const meses = P.mes ? Array.from({ length: 12 }, (_, i) => somaMes(P.mes, i - 11)) : P.meses;
+  if (det === "fixos") return relFixos(P, meses);
   const val = (ym) => {
     if (det.startsWith("cat:")) { const v = S.d.lancs.filter((l) => l.cat === det.slice(4) && l.data.startsWith(ym) && (l.tipo === "despesa" || l.tipo === "receita")).reduce((t, l) => t + l.valor, 0); return { r: 0, d: v }; }
     const r = resumoMes(ym); return { r: det === "des" ? 0 : r.rec, d: det === "rec" ? 0 : r.des };
@@ -1395,6 +1443,12 @@ function relComp(P, det) {
     corpo += `<div class="box"><h3>Destaques</h3>${linhaValor("Melhor mês", `${mesCurto(melhor.m)} · ${fv(melhor)}`, "pos", soD ? "gastou menos" : soR ? "recebeu mais" : "sobrou mais")}
       ${linhaValor("Pior mês", `${mesCurto(pior.m)} · ${fv(pior)}`, "neg", soD ? "gastou mais" : soR ? "recebeu menos" : "gastou mais")}${maiorCat}</div>`;
   }
+  if (!det && S.d.fixos.some((f) => f.tipo === "despesa")) {
+    const ref = P.mes || (meses.includes(mesAtual()) ? mesAtual() : meses[meses.length - 1]);
+    const fx = totFixos(ref, "despesa"), fa = totFixos(somaMes(ref, -1), "despesa"), dt = resumoMes(ref).des;
+    corpo += `<button class="box fx-resumo" data-det="fixos"><span class="mm"><b>Fixos de ${mesCurto(ref)}.: ${fmtR(fx)}</b>
+      <small>${dt ? Math.round((fx / dt) * 100) : 0}% das despesas · ${mesCurto(somaMes(ref, -1))}.: ${fmt(fa)}</small></span><span class="fx-ver">ver fixos ${ic("chevron-right")}</span></button>`;
+  }
   return { k, corpo };
 }
 
@@ -1405,7 +1459,7 @@ function opcoesDetalhe(rel) {
   if (rel === "es") return [{ valor: "", rotulo: "Todas as contas", icone: "wallet" }, ...(S.d.contas.some(ehBenef) ? [{ valor: "benef", rotulo: "Benefícios (VA/VR)", icone: "ticket" }] : []), ...S.d.contas.map((c) => ({ valor: "conta:" + c.id, rotulo: c.nome, icone: icConta(c), grupo: "Uma conta" }))];
   if (rel === "cartoes") return [{ valor: "", rotulo: "Todos os cartões", icone: "credit-card" }, ...S.d.cartoes.map((c) => ({ valor: c.id, rotulo: c.nome, icone: "credit-card", grupo: "Um cartão" }))];
   if (rel === "inv") return [{ valor: "", rotulo: "Todos os investimentos", icone: "piggy-bank" }, ...S.d.invest.map((i) => ({ valor: i.id, rotulo: i.nome, icone: i.icone, sub: i.tipo, grupo: "Um investimento" }))];
-  return [{ valor: "", rotulo: "Receitas e despesas", icone: "chart-line" }, { valor: "des", rotulo: "Só despesas", icone: "receipt" }, { valor: "rec", rotulo: "Só receitas", icone: "trending-up" }, ...cats("despesa")];
+  return [{ valor: "", rotulo: "Receitas e despesas", icone: "chart-line" }, { valor: "des", rotulo: "Só despesas", icone: "receipt" }, { valor: "rec", rotulo: "Só receitas", icone: "trending-up" }, { valor: "fixos", rotulo: "Fixos (recorrentes)", icone: "repeat" }, ...cats("despesa")];
 }
 function rotuloDetalhe(rel, det) { const o = opcoesDetalhe(rel).find((x) => x.valor === det); return o ? o.rotulo : opcoesDetalhe(rel)[0].rotulo; }
 
