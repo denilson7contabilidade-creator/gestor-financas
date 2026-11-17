@@ -1,7 +1,7 @@
 "use strict";
 /* Gestor de Finanças — app instalável, dados guardados só no aparelho e criptografados. */
 
-const VERSAO_APP = "3.21";
+const VERSAO_APP = "3.22";
 const $ = (s, el = document) => el.querySelector(s);
 const esc = (t) => String(t ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const ic = (n) => `<svg class="ic" viewBox="0 0 24 24">${ICONES[n] || ICONES["circle-ellipsis"]}</svg>`;
@@ -1210,10 +1210,10 @@ const linhaBarra = (attr, icone, cor, nome, v, max, sub = "", corBarra = "") => 
   ${sub ? `<span class="g-sub">${sub}</span>` : ""}<span class="br"><i style="width:${max ? Math.max(1, (v / max) * 100) : 0}%${corBarra ? `;background:${corBarra}` : cor ? `;background:${cor}` : ""}"></i></span></span></button>`;
 const linhaValor = (rot, v, cls = "", sub = "") => `<div class="rl"><span>${rot}${sub ? `<small>${sub}</small>` : ""}</span><b class="num ${cls}">${v}</b></div>`;
 // Folha com uma lista de lançamentos
-function verLista(titulo, lancs, sub) {
+function verLista(titulo, lancs, sub, semTotal) {
   const ord = [...lancs].sort((a, b) => b.data.localeCompare(a.data));
   const el = abrirCamada(`<h2>${esc(titulo)}</h2>${sub ? `<p style="text-align:center;color:#777;margin:-6px 0 6px;font-size:14px">${sub}</p>` : ""}
-    <div style="text-align:center;font-size:26px;font-weight:700;margin-bottom:10px" class="num">${fmtR(somaV(ord))}</div>
+    ${semTotal ? `<div style="margin-bottom:8px"></div>` : `<div style="text-align:center;font-size:26px;font-weight:700;margin-bottom:10px" class="num">${fmtR(somaV(ord))}</div>`}
     <div style="margin:0 -18px">${ord.map((l) => itemLanc(l, true)).join("") || `<p class="vazio">Nada aqui.</p>`}</div>`);
   el.querySelectorAll("[data-lanc]").forEach((b) => (b.onclick = () => trocarCamada(() => abrirLanc(b.dataset.lanc))));
 }
@@ -2346,6 +2346,67 @@ function abrirInvestimentos() {
   abrirInvestimentos.repintar = pintar;
 }
 
+/* ----- Lista de planos do investimento: acordos com o histórico dentro, quitados e encerrados recolhidos ----- */
+const faltaBruta = (p) => faltaReceber({ ...p, fim: undefined });
+// todos os planos que entraram (direta ou indiretamente) num acordo
+function origemAcordo(inv, ac) {
+  const out = [];
+  for (const p of progsDe(inv)) if (p.fim && p.fim.acordo === ac.id) { out.push(p); if (p.acordo) out.push(...origemAcordo(inv, p)); }
+  return out;
+}
+const recebidoDe = (p) => S.d.lancs.filter((l) => l.prog === p.id && l.tipo === "resg").reduce((t, l) => t + l.valor, 0);
+const nomePlano = (p) => p.acordo ? `Acordo de ${dataCurta(p.acordo.data)}` : p.modo === "venc" ? `Vencimento ${dataCurta(p.data)}` : p.modo === "mensal" ? "Rendimento mensal" : `Empréstimo ${fmt(p.principal || 0)}`;
+function blocoPlanos(i) {
+  const ps = progsDe(i), abertos = (blocoPlanos.abertos ||= new Set());
+  const ativos = ps.filter((p) => !p.fim && (p.modo === "mensal" || faltaReceber(p) > 0));
+  const quitados = ps.filter((p) => !p.fim && p.modo !== "mensal" && faltaReceber(p) === 0);
+  const encerrados = ps.filter((p) => p.fim && p.fim.motivo !== "acordo");
+  const linha = (p) => `<button class="plano plano-bt${p.fim ? " fim" : ""}" data-edplano="${p.id}"><span>${resumoProg(p)}</span><span class="plano-ed">${p.fim ? ic("chevron-right") : ic("pencil") + "Mudar"}</span></button>`;
+  const cartaoAcordo = (ac) => {
+    const orig = origemAcordo(i, ac).filter((p) => !p.acordo), recebidas = ac.n - progFaltam(ac).length;
+    const F = orig.reduce((t, p) => t + faltaBruta(p), 0), C = orig.reduce((t, p) => t + Math.max(0, progRestante(p)), 0), T = ac.vals.reduce((t, v) => t + v, 0);
+    const prox = progFaltam(ac)[0], ab = abertos.has(ac.id);
+    return `<div class="acc${ab ? " ab" : ""}"><div class="acc-top"><span class="tag-ac">Acordo de ${dataCurta(ac.acordo.data)}</span><button class="btnc" data-edplano="${ac.id}">${ic("pencil")}Mudar</button></div>
+      <b class="acc-v">${descrVals(ac.vals)}</b><div class="acc-s">${recebidas} de ${ac.n} recebidas${prox ? ` · próxima: ${dataCurta(`${prox}-${p2(ac.dia)}`)}` : ""} · falta receber <b class="num">${fmt(faltaReceber(ac))}</b></div>
+      <div class="prog-b"><i style="width:${(recebidas / ac.n) * 100}%"></i></div>
+      ${orig.length ? `<button class="acc-or" data-abreac="${ac.id}"><span class="seta-ac${ab ? " ab" : ""}">${ic("chevron-down")}</span><span>Juntou ${orig.length} empréstimo(s) · faltava ${fmt(F)}</span></button>
+      ${ab ? `<div class="orig">${orig.map((p) => { const rec = p.modo === "parcelas" ? p.n - progFaltam({ ...p, fim: undefined }).length : 0;
+        return `<div class="or-l"><div><b>${nomePlano(p)}</b><small>${p.modo === "parcelas" ? `${p.vals ? descrVals(p.vals) : `${p.n}x ${fmt(p.valor)}`} · recebeu ${rec}${rec ? ` (${fmt(recebidoDe(p))})` : ""}` : `vencimento ${fmt(p.valor)}`}</small></div><div class="fr"><small>faltava</small><b class="num">${fmt(faltaBruta(p))}</b></div></div>`; }).join("")}
+        <div class="or-t"><span>Faltava receber</span><b class="num">${fmt(F)}</b></div><div class="or-t"><span>Valor emprestado que faltava voltar</span><b class="num">${fmt(C)}</b></div>
+        ${F - C > 0 ? `<div class="or-t"><span>Juros que estavam previstos</span><b class="num">${fmt(F - C)}</b></div>` : ""}<div class="or-t"><span><b>Acordo</b></span><b class="num">${fmt(T)}</b></div>
+        <button class="or-h" data-movac="${ac.id}">${ic("list")}Ver as movimentações desses empréstimos</button></div>` : ""}` : ""}</div>`;
+  };
+  // verificação: dinheiro do saldo que não está em nenhum plano a receber
+  const comPlano = ps.some((p) => p.modo !== "mensal");
+  const dentro = ps.filter((p) => !p.fim && p.modo !== "mensal").reduce((t, p) => t + Math.max(0, progRestante(p)), 0);
+  const fora = saldoInv(i.id) - dentro;
+  return `<div class="planos"><div class="planos-cab"><b>${ic("calendar-clock")}Recebimentos programados</b><button class="link" data-novoplano>+ Adicionar</button></div>
+    ${ativos.map((p) => (p.acordo ? cartaoAcordo(p) : linha(p))).join("") || `<p>Nenhum a receber. Use para parcelas de empréstimo, vencimento de pré-fixado ou rendimento mensal.</p>`}
+    ${ativos.filter((p) => p.modo !== "mensal").length ? `<button class="btn contorno ac-bt" data-juntar>${ic("repeat")}Juntar e reparcelar</button>` : ""}
+    ${comPlano && Math.abs(fora) >= 1 && ativos.some((p) => p.modo !== "mensal") ? `<p class="fora-plano">${ic("search")}<span>${fora > 0 ? `<b class="num">${fmtR(fora)}</b> do saldo não estão em nenhum plano a receber.` : `Os planos esperam <b class="num">${fmtR(-fora)}</b> a mais do que o saldo do investimento.`} Confira as aplicações e os recebimentos abaixo.</span></p>` : ""}
+    ${quitados.length ? `<details class="encerrados"><summary>${ic("check")}${quitados.length} ${quitados.length > 1 ? "planos já quitados" : "plano já quitado"}</summary>${quitados.map(linha).join("")}</details>` : ""}
+    ${encerrados.length ? `<details class="encerrados"><summary>${ic("x")}Encerrados (${encerrados.length})</summary>${encerrados.map(linha).join("")}</details>` : ""}</div>`;
+}
+// movimentações dos empréstimos que entraram num acordo ficam guardadas dentro do acordo
+function movsDoAcordo(i, ac) {
+  const orig = origemAcordo(i, ac), ids = new Set(orig.map((p) => p.id)), aplics = new Set(orig.map((p) => p.aplic).filter(Boolean));
+  return S.d.lancs.filter((l) => l.inv === i.id && ((l.prog && ids.has(l.prog)) || aplics.has(l.id) || (l.acordo && (l.acordo === ac.id || ids.has(l.acordo)))));
+}
+function listaMovs(i, movs) {
+  const acs = progsDe(i).filter((p) => p.acordo && !(p.fim && p.fim.motivo === "acordo"));
+  const escondidos = new Map();
+  for (const ac of acs) for (const l of movsDoAcordo(i, ac)) escondidos.set(l.id, ac);
+  const vistos = new Set(); let html = "";
+  for (const l of movs) {
+    const ac = escondidos.get(l.id);
+    if (!ac) { html += itemLanc(l, true); continue; }
+    if (vistos.has(ac.id)) continue; vistos.add(ac.id);
+    const n = origemAcordo(i, ac).filter((p) => !p.acordo).length, qt = movsDoAcordo(i, ac).length;
+    html += `<button class="item" data-movac="${ac.id}">${bola(i.icone, corInv(i))}<span class="meio"><div>Acordo de ${dataCurta(ac.acordo.data)}</div><small>${n} empréstimo(s) juntados · ${qt} movimentação(ões) guardadas</small></span><span class="val num">${fmt(ac.vals.reduce((t, v) => t + v, 0))}</span></button>`;
+  }
+  return html;
+}
+
 function verInvest(id) {
   const el = abrirCamada(`<div data-c></div>`);
   const pintar = () => {
@@ -2359,21 +2420,19 @@ function verInvest(id) {
         <button class="btn contorno" data-ed style="width:auto;padding:8px 14px;margin-left:auto">${ic("pencil")}Editar</button></div>
       <div class="inv-saldo"><small>Saldo hoje</small><b class="num">${fmtR(s)}</b><span>Rendimentos acumulados: <b class="num">${sinalR(rendTot)}</b></span>
 </div>
-      <div class="planos"><div class="planos-cab"><b>${ic("calendar-clock")}Recebimentos programados</b><button class="link" data-novoplano>+ Adicionar</button></div>
-        ${progsDe(i).filter((pl) => !pl.fim).map((pl) => `<button class="plano plano-bt" data-edplano="${pl.id}"><span>${pl.acordo ? "<b>Acordo</b> · " : ""}${resumoProg(pl)}</span><span class="plano-ed">${ic("pencil")}Mudar</span></button>`).join("")
-          || `<p>Nenhum ativo. Use para parcelas de empréstimo, vencimento de pré-fixado ou rendimento mensal.</p>`}
-        ${progsDe(i).filter((pl) => !pl.fim && pl.modo !== "mensal" && faltaReceber(pl) > 0).length ? `<button class="btn contorno ac-bt" data-juntar>${ic("repeat")}Juntar e reparcelar</button>` : ""}
-        ${progsDe(i).some((pl) => pl.fim) ? `<details class="encerrados"><summary>Encerrados (${progsDe(i).filter((pl) => pl.fim).length})</summary>${progsDe(i).filter((pl) => pl.fim).map((pl) => `<button class="plano plano-bt fim" data-edplano="${pl.id}"><span>${resumoProg(pl)}</span><span class="plano-ed">${ic("chevron-right")}</span></button>`).join("")}</details>` : ""}</div>
+      ${blocoPlanos(i)}
       ${i.saldoInicial > 0 ? `<div class="inv-aviso"><span><b class="num">${fmtR(i.saldoInicial)}</b> foi cadastrado como "já estava investido", por isso não saiu do saldo da conta nem aparece no histórico.</span>
         <button class="btn preto" data-converter>Esse valor saiu da minha conta</button></div>` : ""}
       ${i.meta > 0 ? `<div class="meta" style="padding:0 0 12px"><div class="meta-l"><b>Meta${i.metaNome ? ": " + esc(i.metaNome) : ""}</b><span class="num">${Math.floor(p)}%</span></div>
         <div class="meta-b"><i style="width:${p}%;background:${corInv(i)}"></i></div><small>${fmtR(s)} de ${fmtR(i.meta)} · ${s >= i.meta ? "meta alcançada!" : `faltam ${fmtR(i.meta - s)}`}</small></div>` : ""}
       <div class="inv-acoes" style="margin:4px 0 12px"><button data-mov="aplic">${ic("download")}Aplicar</button><button data-mov="resg">${ic("upload")}Resgatar</button><button data-mov="rend">${ic("trending-up")}Rendimento</button></div>
-      <div style="margin:0 -18px">${movs.map((l) => itemLanc(l, true)).join("") || `<p class="vazio" style="padding:20px">Nenhuma movimentação ainda.</p>`}</div>`;
+      <div style="margin:0 -18px">${listaMovs(i, movs) || `<p class="vazio" style="padding:20px">Nenhuma movimentação ainda.</p>`}</div>`;
     $("[data-ed]", el).onclick = () => editarInvest(i, pintar);
     $("[data-novoplano]", el).onclick = () => editarPlano(i, null, pintar);
     el.querySelectorAll("[data-edplano]").forEach((b) => (b.onclick = () => gerenciarPlano(i, progsDe(i).find((x) => x.id === b.dataset.edplano), pintar)));
     const jt = $("[data-juntar]", el); if (jt) jt.onclick = () => abrirAcordo(i, null, pintar);
+    el.querySelectorAll("[data-abreac]").forEach((b) => (b.onclick = () => { const A = (blocoPlanos.abertos ||= new Set()); A.has(b.dataset.abreac) ? A.delete(b.dataset.abreac) : A.add(b.dataset.abreac); pintar(); }));
+    el.querySelectorAll("[data-movac]").forEach((b) => (b.onclick = () => { const ac = progsDe(i).find((x) => x.id === b.dataset.movac); verLista(`Histórico do acordo de ${dataCurta(ac.acordo.data)}`, movsDoAcordo(i, ac), "Aplicações, parcelas recebidas e o desconto dos empréstimos juntados", true); }));
     const cv = $("[data-converter]", el);
     if (cv) cv.onclick = () => {
       const sh = abrirCamada(`<h2>Lançar como aplicação</h2>
@@ -2694,7 +2753,7 @@ function abrirAcordo(inv, pre, depois) {
           <span class="mm"><b>${p.modo === "venc" ? "Vencimento " + dataCurta(p.data) : p.acordo ? "Acordo " + mesCurto(p.inicio) + "/" + p.inicio.slice(2, 4) : "Empréstimo " + fmt(p.principal || 0)}</b>
           <small>${p.modo === "parcelas" ? `${p.vals ? descrVals(p.vals) : `${p.n}x de ${fmt(p.valor)}`} · recebeu ${p.n - progFaltam(p).length}` : `vai receber ${fmt(p.valor)}`}</small></span>
           <span class="fr"><small>falta</small><b class="num">${fmt(faltaReceber(p))}</b></span></label>`).join("")}</div>
-        <div class="ac-tot"><span>${sel.size} selecionado(s)</span><b class="num">Falta ${fmtR(somaFalta())}</b></div>
+        <div class="ac-tot"><span>${sel.size} selecionado(s)${somaFalta() > somaCap() ? `<small>${fmt(somaCap())} emprestado que falta voltar + ${fmt(somaFalta() - somaCap())} de juros previstos</small>` : ""}</span><b class="num">Falta ${fmtR(somaFalta())}</b></div>
         <button class="btn preto" data-seg ${sel.size ? "" : "disabled"}>Continuar</button>`;
       c.querySelectorAll("input[type=checkbox]").forEach((x) => (x.onchange = () => { x.checked ? sel.add(x.value) : sel.delete(x.value); total = 0; vals = []; pintar(); }));
     } else if (passo === 2) {
