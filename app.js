@@ -1,7 +1,7 @@
 "use strict";
 /* Gestor de Finanças — app instalável, dados guardados só no aparelho e criptografados. */
 
-const VERSAO_APP = "3.20";
+const VERSAO_APP = "3.21";
 const $ = (s, el = document) => el.querySelector(s);
 const esc = (t) => String(t ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const ic = (n) => `<svg class="ic" viewBox="0 0 24 24">${ICONES[n] || ICONES["circle-ellipsis"]}</svg>`;
@@ -412,6 +412,8 @@ function removerTopo() {
   t.aoFechar && t.aoFechar();
 }
 function fechar() { if (pilha.length) history.back(); }
+// Fecha a folha de cima e só depois abre outra (o "voltar" do navegador é assíncrono)
+function trocarCamada(fn) { const n = pilha.length; if (!n) return fn(); fechar(); const t = setInterval(() => { if (pilha.length < n) { clearInterval(t); fn(); } }, 25); }
 function fecharTudo() { while (pilha.length) removerTopo(); }
 window.addEventListener("popstate", () => { if (pilha.length) removerTopo(); });
 
@@ -1213,7 +1215,7 @@ function verLista(titulo, lancs, sub) {
   const el = abrirCamada(`<h2>${esc(titulo)}</h2>${sub ? `<p style="text-align:center;color:#777;margin:-6px 0 6px;font-size:14px">${sub}</p>` : ""}
     <div style="text-align:center;font-size:26px;font-weight:700;margin-bottom:10px" class="num">${fmtR(somaV(ord))}</div>
     <div style="margin:0 -18px">${ord.map((l) => itemLanc(l, true)).join("") || `<p class="vazio">Nada aqui.</p>`}</div>`);
-  el.querySelectorAll("[data-lanc]").forEach((b) => (b.onclick = () => { fechar(); abrirLanc(b.dataset.lanc); }));
+  el.querySelectorAll("[data-lanc]").forEach((b) => (b.onclick = () => trocarCamada(() => abrirLanc(b.dataset.lanc))));
 }
 
 /* --- 1. Gastos (data da compra) --- */
@@ -2358,8 +2360,10 @@ function verInvest(id) {
       <div class="inv-saldo"><small>Saldo hoje</small><b class="num">${fmtR(s)}</b><span>Rendimentos acumulados: <b class="num">${sinalR(rendTot)}</b></span>
 </div>
       <div class="planos"><div class="planos-cab"><b>${ic("calendar-clock")}Recebimentos programados</b><button class="link" data-novoplano>+ Adicionar</button></div>
-        ${progsDe(i).length ? progsDe(i).map((pl) => `<button class="plano plano-bt" data-edplano="${pl.id}"><span>${resumoProg(pl)}</span><span class="plano-ed">${ic("pencil")}Editar</span></button>`).join("")
-          : `<p>Nenhum. Use para parcelas de empréstimo, vencimento de pré-fixado ou rendimento mensal.</p>`}</div>
+        ${progsDe(i).filter((pl) => !pl.fim).map((pl) => `<button class="plano plano-bt" data-edplano="${pl.id}"><span>${pl.acordo ? "<b>Acordo</b> · " : ""}${resumoProg(pl)}</span><span class="plano-ed">${ic("pencil")}Mudar</span></button>`).join("")
+          || `<p>Nenhum ativo. Use para parcelas de empréstimo, vencimento de pré-fixado ou rendimento mensal.</p>`}
+        ${progsDe(i).filter((pl) => !pl.fim && pl.modo !== "mensal" && faltaReceber(pl) > 0).length ? `<button class="btn contorno ac-bt" data-juntar>${ic("repeat")}Juntar e reparcelar</button>` : ""}
+        ${progsDe(i).some((pl) => pl.fim) ? `<details class="encerrados"><summary>Encerrados (${progsDe(i).filter((pl) => pl.fim).length})</summary>${progsDe(i).filter((pl) => pl.fim).map((pl) => `<button class="plano plano-bt fim" data-edplano="${pl.id}"><span>${resumoProg(pl)}</span><span class="plano-ed">${ic("chevron-right")}</span></button>`).join("")}</details>` : ""}</div>
       ${i.saldoInicial > 0 ? `<div class="inv-aviso"><span><b class="num">${fmtR(i.saldoInicial)}</b> foi cadastrado como "já estava investido", por isso não saiu do saldo da conta nem aparece no histórico.</span>
         <button class="btn preto" data-converter>Esse valor saiu da minha conta</button></div>` : ""}
       ${i.meta > 0 ? `<div class="meta" style="padding:0 0 12px"><div class="meta-l"><b>Meta${i.metaNome ? ": " + esc(i.metaNome) : ""}</b><span class="num">${Math.floor(p)}%</span></div>
@@ -2368,7 +2372,8 @@ function verInvest(id) {
       <div style="margin:0 -18px">${movs.map((l) => itemLanc(l, true)).join("") || `<p class="vazio" style="padding:20px">Nenhuma movimentação ainda.</p>`}</div>`;
     $("[data-ed]", el).onclick = () => editarInvest(i, pintar);
     $("[data-novoplano]", el).onclick = () => editarPlano(i, null, pintar);
-    el.querySelectorAll("[data-edplano]").forEach((b) => (b.onclick = () => editarPlano(i, progsDe(i).find((x) => x.id === b.dataset.edplano), pintar)));
+    el.querySelectorAll("[data-edplano]").forEach((b) => (b.onclick = () => gerenciarPlano(i, progsDe(i).find((x) => x.id === b.dataset.edplano), pintar)));
+    const jt = $("[data-juntar]", el); if (jt) jt.onclick = () => abrirAcordo(i, null, pintar);
     const cv = $("[data-converter]", el);
     if (cv) cv.onclick = () => {
       const sh = abrirCamada(`<h2>Lançar como aplicação</h2>
@@ -2549,7 +2554,7 @@ function progRestante(p) {
 const progsDe = (inv) => inv.progs || [];
 
 function progItem(inv, p, ym) {
-  if (progFeito(p, ym)) return null;
+  if (p.fim || progFeito(p, ym)) return null;
   const diaEm = (dia) => { const [a, m] = ym.split("-").map(Number); return `${ym}-${p2(Math.min(dia, new Date(a, m, 0).getDate()))}`; };
   const de = progsDe(inv).length > 1 && p.principal ? ` · de ${fmtR(p.principal)}` : "";
   if (p.modo === "venc") {
@@ -2559,7 +2564,7 @@ function progItem(inv, p, ym) {
   if (p.modo === "parcelas") {
     const k = mesesEntre(p.inicio, ym);
     if (k < 0 || k >= p.n) return null;
-    return { inv, p, ym, data: diaEm(p.dia), valor: p.valor, rot: `Parcela ${k + 1}/${p.n}`, sub: `parcela ${k + 1}/${p.n} · dia ${dataCurta(diaEm(p.dia))}${de}`, k, ultima: k === p.n - 1 };
+    return { inv, p, ym, data: diaEm(p.dia), valor: valParc(p, k), rot: `Parcela ${k + 1}/${p.n}`, sub: `parcela ${k + 1}/${p.n} · dia ${dataCurta(diaEm(p.dia))}${de}`, k, ultima: k === p.n - 1 };
   }
   if (p.modo === "mensal") {
     if (mesesEntre(p.inicio, ym) < 0) return null;
@@ -2580,21 +2585,190 @@ function progAtrasadas(ymAtual) {
 // O que mostrar em "Investimentos a receber": no mês atual, inclui as atrasadas
 const progAReceber = (ym) => [...(ym === mesAtual() ? progAtrasadas(ym) : []), ...progPendentes(ym)].sort((a, b) => a.data.localeCompare(b.data));
 // Meses do plano ainda não recebidos
-const progFaltam = (p) => p.modo === "parcelas" ? Array.from({ length: p.n }, (_, k) => somaMes(p.inicio, k)).filter((ym) => !progFeito(p, ym)) : p.modo === "venc" ? [p.data.slice(0, 7)].filter((ym) => !progFeito(p, ym)) : [];
+const progFaltam = (p) => p.fim ? [] : p.modo === "parcelas" ? Array.from({ length: p.n }, (_, k) => somaMes(p.inicio, k)).filter((ym) => !progFeito(p, ym)) : p.modo === "venc" ? [p.data.slice(0, 7)].filter((ym) => !progFeito(p, ym)) : [];
+
+/* ----- Encerrar, mudar ou juntar planos de recebimento (empréstimos, CDB…) ----- */
+const valParc = (p, k) => (p.vals ? p.vals[k] : p.valor);
+// quanto ainda falta receber das parcelas/vencimento deste plano
+const faltaReceber = (p) => p.fim ? 0 : p.modo === "parcelas" ? progFaltam(p).reduce((t, ym) => t + valParc(p, mesesEntre(p.inicio, ym)), 0) : p.modo === "venc" ? (progFaltam(p).length ? p.valor : 0) : 0;
+const descrVals = (vals) => { const g = []; for (const v of vals) { const u = g[g.length - 1]; if (u && u.v === v) u.n++; else g.push({ v, n: 1 }); } return g.map((x) => `${x.n}x ${fmt(x.v)}`).join(" + "); };
+const MOTIVO_FIM = { resgate: "Resgatado antes do vencimento", perda: "Não vai receber o que faltava", parado: "Parcelas que faltavam foram tiradas", acordo: "Entrou num novo acordo" };
+const lancsFim = (p) => S.d.lancs.filter((l) => l.prog === p.id && l.progMes === "fim");
+
+function gerenciarPlano(inv, p, depois) {
+  const pronto = async (msg) => { await salvar(); fechar(); aviso(msg); setTimeout(() => { depois && depois(); atualizarFundo(); }, 0); };
+  const op = (attr, icone, t, sub, perigo) => `<button class="opt-l${perigo ? " perigo" : ""}" ${attr}><span class="bo2">${ic(icone)}</span><span class="mm"><b>${t}</b><small>${sub}</small></span>${ic("chevron-right")}</button>`;
+  const falta = faltaReceber(p), resta = Math.max(0, progRestante(p));
+  let ops = "";
+  if (p.fim) {
+    const novo = p.fim.acordo && progsDe(inv).find((x) => x.id === p.fim.acordo);
+    ops += p.fim.motivo === "acordo"
+      ? (novo ? op("data-desacordo", "repeat", "Desfazer o acordo", "Os empréstimos voltam como estavam antes do acordo.") : "")
+      : op("data-reabrir", "calendar-clock", "Reabrir este plano", p.fim.motivo === "parado" ? "As parcelas que faltavam voltam para “a receber”." : "Apaga o lançamento de encerramento e as parcelas voltam para “a receber”.");
+  } else {
+    if (!p.vals) ops += op("data-editar", "pencil", "Editar o plano", "Mudar valor, parcelas ou datas.");
+    if (p.modo !== "mensal") {
+      ops += op("data-resg", "trending-up", p.modo === "venc" ? "Resgatei antes do vencimento" : "Recebi tudo de uma vez", "Informe quanto caiu na conta. O app calcula o rendimento real.");
+      ops += op("data-mudou", "repeat", "Mudou o combinado (recalcular)", "Novo valor, nº de parcelas ou data para o que falta.");
+      ops += op("data-perda", "x", "Não vou receber o que falta", `O que falta voltar (${fmtR(resta)}) vira perda e o plano é encerrado.`, true);
+    }
+    ops += op("data-parar", "calendar", p.modo === "mensal" ? "Parar este rendimento" : "Só tirar as parcelas que faltam", p.modo === "mensal" ? "Deixa de aparecer todo mês." : "Para de mostrar “a receber”. O valor fica no investimento para decidir depois.");
+    if (p.acordo) ops += op("data-desacordo", "repeat", "Desfazer este acordo", "Os empréstimos antigos voltam como estavam.");
+  }
+  const el = abrirCamada(`<h2>${p.acordo ? "Acordo" : "Recebimento programado"}</h2>
+    <p class="gp-res">${resumoProg(p)}</p>${p.fim ? "" : `<p class="gp-sub">O que já foi recebido continua no histórico.</p>`}
+    <div class="opts">${ops}</div>`);
+  const on = (sel, fn) => { const b = $(sel, el); if (b) b.onclick = fn; };
+  on("[data-editar]", () => trocarCamada(() => editarPlano(inv, p, depois)));
+  on("[data-mudou]", () => trocarCamada(() => abrirAcordo(inv, [p.id], depois)));
+  on("[data-parar]", async () => {
+    if (!(await confirmar(p.modo === "mensal" ? "Parar rendimento" : "Tirar parcelas que faltam", p.modo === "mensal" ? "Ele deixa de aparecer todo mês. Dá para reabrir depois." : `Saem ${progFaltam(p).length} parcela(s) de “a receber”. O valor continua no investimento. Dá para reabrir depois.`, "Confirmar"))) return;
+    p.fim = { data: hoje(), motivo: "parado" }; pronto("Pronto. Parcelas tiradas.");
+  });
+  on("[data-perda]", async () => {
+    const txt = resta > 0 ? `${fmtR(resta)} (o que ainda faltava voltar do valor ${p.modo === "venc" ? "aplicado" : "emprestado"}) vira perda no investimento. Não mexe no saldo da conta nem entra como despesa.`
+      : "O valor emprestado já voltou todo; só deixa de receber os juros. O plano é encerrado.";
+    if (!(await confirmar("Não vou receber", txt, "Confirmar", true))) return;
+    if (resta > 0) S.d.lancs.push({ id: novoId(), tipo: "rend", perda: true, valor: resta, nota: "Não recebido", data: hoje(), inv: inv.id, conta: null, prog: p.id, progMes: "fim" });
+    p.fim = { data: hoje(), motivo: "perda" }; pronto("Plano encerrado.");
+  });
+  on("[data-resg]", () => {
+    const contas = S.d.contas.filter((c) => !ehBenef(c));
+    const sh = abrirCamada(`<h2>${p.modo === "venc" ? "Resgatei antes do vencimento" : "Recebi tudo de uma vez"}</h2>
+      <form data-f><label>Quanto caiu na conta (R$)<input name="valor" inputmode="decimal" placeholder="Ex.: ${nf2.format(resta / 100)}" required></label>
+      <div class="dois"><label>Data<input type="date" name="data" value="${hoje()}" max="${hoje()}" required></label>
+      <label>Caiu na conta<select name="conta">${contas.map((c) => `<option value="${c.id}" ${c.id === contaPadrao(p.conta) ? "selected" : ""}>${esc(c.nome)}</option>`).join("")}</select></label></div>
+      <div class="calc" data-calc></div><div class="botoes"><button class="btn preto">Confirmar e encerrar</button></div></form>`);
+    const f = $("[data-f]", sh), calc = $("[data-calc]", sh);
+    const conta0 = () => {
+      const v = lerValor(f.valor.value) || 0, d = v - resta;
+      calc.innerHTML = `<div class="rl"><span>Faltava voltar do valor ${p.modo === "venc" ? "aplicado" : "emprestado"}</span><b class="num">${fmt(resta)}</b></div><div class="rl"><span>Recebido agora</span><b class="num">${fmt(v)}</b></div>
+        <div class="rl"><span><b>${d < 0 ? "Perda" : "Rendeu de verdade"}</b>${falta > resta ? `<small>em vez dos ${fmt(falta - resta)} previstos</small>` : ""}</span><b class="num ${d < 0 ? "neg" : "pos"}">${d < 0 ? "− " : "+ "}${fmt(Math.abs(d))}</b></div>`;
+    };
+    f.valor.oninput = conta0; conta0();
+    f.onsubmit = async (e) => {
+      e.preventDefault();
+      const v = lerValor(f.valor.value);
+      if (!(v > 0)) return aviso("Digite quanto caiu na conta.");
+      registrarReceb(inv, p, "fim", v, f.data.value, f.conta.value, false);
+      p.fim = { data: f.data.value, motivo: "resgate" };
+      await salvar(); fechar(); fechar(); aviso("Resgate lançado e plano encerrado."); setTimeout(() => { depois && depois(); atualizarFundo(); }, 0);
+    };
+  });
+  on("[data-reabrir]", async () => {
+    if (!(await confirmar("Reabrir plano", p.fim.motivo === "parado" ? "As parcelas que faltavam voltam para “a receber”." : "O lançamento de encerramento é apagado e as parcelas voltam para “a receber”.", "Reabrir"))) return;
+    const ids = lancsFim(p).map((x) => x.id); S.d.lancs = S.d.lancs.filter((x) => !ids.includes(x.id));
+    delete p.fim; pronto("Plano reaberto.");
+  });
+  on("[data-desacordo]", async () => {
+    const ac = p.acordo ? p : progsDe(inv).find((x) => x.id === p.fim.acordo);
+    if (progRecebidas(ac)) return aviso("Esse acordo já tem parcela recebida. Desfaça os recebimentos dele antes.");
+    if (!(await confirmar("Desfazer acordo", "O acordo é apagado e os empréstimos antigos voltam como estavam.", "Desfazer", true))) return;
+    S.d.lancs = S.d.lancs.filter((l) => l.acordo !== ac.id);
+    for (const x of progsDe(inv)) if (x.fim && x.fim.acordo === ac.id) delete x.fim;
+    inv.progs = progsDe(inv).filter((x) => x.id !== ac.id);
+    pronto("Acordo desfeito.");
+  });
+}
+
+// Juntar um ou mais planos num novo acordo, com parcelas do jeito que você quiser
+function abrirAcordo(inv, pre, depois) {
+  const cand = progsDe(inv).filter((p) => !p.fim && p.modo !== "mensal" && faltaReceber(p) > 0);
+  if (!cand.length) return aviso("Não há parcelas faltando para reparcelar.");
+  const sel = new Set(pre && pre.length ? pre : cand.map((p) => p.id));
+  let passo = 1, total = 0, vals = [], inicio = somaMes(mesAtual(), 1), dia = (cand.find((p) => p.dia) || {}).dia || 10, vParc = 0, nParc = 0, modoP = "valor";
+  const el = abrirCamada(`<div data-ac></div>`, { aoFechar: () => setTimeout(() => { depois && depois(); atualizarFundo(); }, 0) });
+  const escolhidos = () => cand.filter((p) => sel.has(p.id));
+  const somaFalta = () => escolhidos().reduce((t, p) => t + faltaReceber(p), 0);
+  const somaCap = () => escolhidos().reduce((t, p) => t + Math.max(0, progRestante(p)), 0);
+  const montar = () => {
+    if (modoP === "valor" && vParc > 0) { const n = Math.floor(total / vParc), r = total - n * vParc; vals = Array(n).fill(vParc); if (r > 0) { if (n && r < vParc / 2) vals[n - 1] += r; else vals.push(r); } }
+    else if (modoP === "n" && nParc > 0) { const b = Math.floor(total / nParc); vals = Array(nParc).fill(b); vals[nParc - 1] += total - b * nParc; }
+  };
+  const pintar = () => {
+    const c = $("[data-ac]", el);
+    const cab = (t) => `<div class="ac-cab">${passo > 1 ? `<button class="ac-volta" data-volta>${ic("chevron-left")}</button>` : "<span></span>"}<h2>${t}</h2><small>${passo} de 3</small></div>`;
+    if (passo === 1) {
+      c.innerHTML = cab("Juntar e reparcelar") + `<p class="gp-sub">Escolha o que entra no novo acordo. O que já foi recebido fica no histórico.</p>
+        <div class="box sem-pad ac-lista">${cand.map((p) => `<label class="ac-pl"><input type="checkbox" value="${p.id}" ${sel.has(p.id) ? "checked" : ""}>
+          <span class="mm"><b>${p.modo === "venc" ? "Vencimento " + dataCurta(p.data) : p.acordo ? "Acordo " + mesCurto(p.inicio) + "/" + p.inicio.slice(2, 4) : "Empréstimo " + fmt(p.principal || 0)}</b>
+          <small>${p.modo === "parcelas" ? `${p.vals ? descrVals(p.vals) : `${p.n}x de ${fmt(p.valor)}`} · recebeu ${p.n - progFaltam(p).length}` : `vai receber ${fmt(p.valor)}`}</small></span>
+          <span class="fr"><small>falta</small><b class="num">${fmt(faltaReceber(p))}</b></span></label>`).join("")}</div>
+        <div class="ac-tot"><span>${sel.size} selecionado(s)</span><b class="num">Falta ${fmtR(somaFalta())}</b></div>
+        <button class="btn preto" data-seg ${sel.size ? "" : "disabled"}>Continuar</button>`;
+      c.querySelectorAll("input[type=checkbox]").forEach((x) => (x.onchange = () => { x.checked ? sel.add(x.value) : sel.delete(x.value); total = 0; vals = []; pintar(); }));
+    } else if (passo === 2) {
+      const soma = vals.reduce((t, v) => t + v, 0), ok = vals.length && soma === total;
+      c.innerHTML = cab("Novo acordo") + `<form data-f onsubmit="return false">
+        <label>Quanto vai receber no total (R$)<input name="total" inputmode="decimal" value="${total ? nf2.format(total / 100) : ""}"></label>
+        <div class="dois"><label>Primeira parcela<input type="month" name="ini" value="${inicio}"></label><label>Todo dia<input name="dia" inputmode="numeric" value="${dia}"></label></div>
+        <div class="seg3"><button type="button" data-mp="valor" class="${modoP === "valor" ? "on" : ""}">Valor de cada parcela</button><button type="button" data-mp="n" class="${modoP === "n" ? "on" : ""}">Nº de parcelas</button></div>
+        ${modoP === "valor" ? `<label>Valor de cada parcela (R$)<input name="vp" inputmode="decimal" value="${vParc ? nf2.format(vParc / 100) : ""}" placeholder="Ex.: 100,00"></label>`
+          : `<label>Em quantas parcelas<input name="np" inputmode="numeric" value="${nParc || ""}" placeholder="Ex.: 10"></label>`}</form>
+        ${vals.length ? `<div class="ac-parc-cab"><b>Parcelas</b><small>toque num valor para mudar</small></div>
+          <div class="grade-p">${vals.map((v, k) => `<button class="pc" data-pc="${k}"><small>${k + 1} · ${mesCurto(somaMes(inicio, k))}/${somaMes(inicio, k).slice(2, 4)}</small><b class="num">${fmt(v)}</b></button>`).join("")}
+            <button class="pc mais" data-maispc>${ic("plus")}</button></div>
+          <p class="soma ${ok ? "ok" : "erro"}">${ok ? `${ic("check")} Soma das parcelas: ${fmt(soma)}` : `Soma das parcelas ${fmt(soma)} ≠ total ${fmt(total)}`}</p>` : `<p class="gp-sub">Digite o valor de cada parcela ou o número de parcelas.</p>`}
+        <button class="btn preto" data-seg ${ok ? "" : "disabled"}>Ver resumo</button>`;
+      const f = $("[data-f]", c);
+      f.total.onchange = () => { total = lerValor(f.total.value) || 0; montar(); pintar(); };
+      f.ini.onchange = () => { inicio = f.ini.value || inicio; pintar(); };
+      f.dia.onchange = () => { dia = Math.min(28, Math.max(1, parseInt(f.dia.value) || dia)); pintar(); };
+      if (f.vp) f.vp.onchange = () => { vParc = lerValor(f.vp.value) || 0; montar(); pintar(); };
+      if (f.np) f.np.onchange = () => { nParc = Math.min(120, parseInt(f.np.value) || 0); montar(); pintar(); };
+      c.querySelectorAll("[data-mp]").forEach((b) => (b.onclick = () => { modoP = b.dataset.mp; montar(); pintar(); }));
+      c.querySelectorAll("[data-pc]").forEach((b) => (b.onclick = () => {
+        const k = Number(b.dataset.pc);
+        const sh = abrirCamada(`<h2>Parcela ${k + 1}</h2><form data-f><label>Valor (R$)<input name="v" inputmode="decimal" value="${nf2.format(vals[k] / 100)}"></label>
+          <div class="botoes"><button class="btn preto">Salvar</button><button type="button" class="btn perigo" data-tira>Tirar esta parcela</button></div></form>`);
+        $("[data-f]", sh).onsubmit = (e) => { e.preventDefault(); const v = lerValor(e.target.v.value); if (!(v > 0)) return aviso("Valor inválido."); vals[k] = v; fechar(); pintar(); };
+        $("[data-tira]", sh).onclick = () => { vals.splice(k, 1); fechar(); pintar(); };
+      }));
+      const mp = $("[data-maispc]", c); if (mp) mp.onclick = () => { const r = total - vals.reduce((t, v) => t + v, 0); vals.push(r > 0 ? r : vals[vals.length - 1] || 0); pintar(); };
+    } else {
+      const F = somaFalta(), C = somaCap(), dif = total - F, perda = Math.max(0, C - total);
+      c.innerHTML = cab("Resumo") + `<div class="antes-dep"><div class="ad"><small>Antes</small><b>${sel.size} plano(s)</b><em class="num">falta ${fmt(F)}</em></div>
+          <div class="seta2">${ic("chevron-right")}</div><div class="ad dep"><small>Depois</small><b>1 acordo</b><span>${descrVals(vals)}</span><em class="num">vai receber ${fmt(total)}</em></div></div>
+        <div class="box"><div class="rl"><span>Faltava receber</span><b class="num">${fmt(F)}</b></div><div class="rl"><span>Novo acordo</span><b class="num">${fmt(total)}</b></div>
+          <div class="rl"><span><b>Diferença</b><small>${dif < 0 ? (perda ? `${fmt(perda)} do valor emprestado não volta: entra como perda` : "você deixa de ganhar esse valor de juros (não é perda do valor emprestado)") : dif > 0 ? "a mais: entra como juros quando receber" : "mesmo valor"}</small></span><b class="num ${dif < 0 ? "neg" : dif > 0 ? "pos" : ""}">${dif < 0 ? "− " : dif > 0 ? "+ " : ""}${fmt(Math.abs(dif))}</b></div></div>
+        <div class="box"><h3>O que acontece</h3>
+          <div class="li">${ic("check")}<span>As parcelas antigas que faltavam saem de “a receber”.</span></div>
+          <div class="li">${ic("check")}<span>O que você já recebeu continua no histórico.</span></div>
+          <div class="li">${ic("check")}<span>Entra 1 acordo com ${vals.length} parcela(s), a primeira em ${dataCurta(`${inicio}-${p2(dia)}`)}/${inicio.slice(2, 4)}.</span></div>
+          <div class="li">${ic("check")}<span>Dá para desfazer: tocando no acordo → “Desfazer este acordo”.</span></div></div>
+        <button class="btn preto" data-ok>Confirmar novo acordo</button>`;
+      $("[data-ok]", c).onclick = async () => {
+        const ids = [...sel], base = escolhidos()[0];
+        const novo = { id: novoId(), modo: "parcelas", n: vals.length, valor: vals[0], vals: [...vals], inicio, dia, conta: base.conta, principal: Math.min(C, total), acordo: { data: hoje(), de: ids } };
+        inv.progs.push(novo);
+        for (const p of escolhidos()) p.fim = { data: hoje(), motivo: "acordo", acordo: novo.id };
+        if (perda > 0) S.d.lancs.push({ id: novoId(), tipo: "rend", perda: true, valor: perda, nota: "Desconto no acordo", data: hoje(), inv: inv.id, conta: null, acordo: novo.id });
+        await salvar(); fechar(); aviso("Novo acordo criado.");
+      };
+    }
+    const v = $("[data-volta]", c); if (v) v.onclick = () => { passo--; pintar(); };
+    const sg = $("[data-seg]", c); if (sg) sg.onclick = () => {
+      if (passo === 1) { if (!total || !vals.length) { total = somaFalta(); vParc = 0; vals = []; } }
+      passo++; pintar();
+    };
+  };
+  pintar();
+}
 
 // Quanto de um recebimento é juros/rendimento. O resto é o valor emprestado/aplicado voltando.
 // Parcelas: cada uma devolve 1/n do valor emprestado; a última devolve o que faltar. Nunca vira "perda".
-function jurosDe(p, v) {
-  if (p.modo === "mensal") return v;
+function jurosDe(p, v, tudo) {
+  if (p.modo === "mensal" && !tudo) return v;
   const resta = Math.max(0, progRestante(p));
-  if (p.modo === "venc") return v - resta;
+  if (p.modo === "venc" || tudo) return v - resta; // vencimento, ou recebeu tudo de uma vez/resgatou antes
   const faltam = p.n - progRecebidas(p);
-  const capital = Math.min(v, faltam <= 1 ? resta : Math.min(resta, Math.round((p.principal || 0) / p.n)));
+  const parte = p.vals ? Math.round(((p.principal || 0) * v) / p.vals.reduce((t, x) => t + x, 0)) : Math.round((p.principal || 0) / p.n);
+  const capital = Math.min(v, faltam <= 1 ? resta : Math.min(resta, parte));
   return v - capital;
 }
 // Grava um recebimento: resgate do valor (cai na conta) + juros/rendimento
 function registrarReceb(inv, p, ym, v, data, conta, reinv) {
-  const j = jurosDe(p, v), novos = [];
+  const j = jurosDe(p, v, ym === "fim"), novos = [];
   if (j !== 0) { const r = { id: novoId(), tipo: "rend", valor: Math.abs(j), nota: "", data, inv: inv.id, conta: null, prog: p.id, progMes: ym }; if (j < 0) r.perda = true; novos.push(r); }
   if (!reinv) novos.push({ id: novoId() + "r", tipo: "resg", valor: v, nota: "", data, inv: inv.id, conta, prog: p.id, progMes: ym });
   novos.forEach((n) => S.d.lancs.push(n));
@@ -2614,7 +2788,7 @@ function planoDaAplic(l) {
 }
 const planoDe = (l) => (l.prog ? progsDe(invest(l.inv)).find((p) => p.id === l.prog) || null : null);
 const grupoReceb = (l) => S.d.lancs.filter((x) => x.prog === l.prog && x.progMes === l.progMes && x.inv === l.inv && ehInvest(x.tipo));
-const rotuloReceb = (p, ym) => !p ? "Recebimento" : p.modo === "parcelas" ? `Parcela ${mesesEntre(p.inicio, ym) + 1}/${p.n}` : p.modo === "venc" ? "Vencimento" : "Rendimento do mês";
+const rotuloReceb = (p, ym) => !p ? "Recebimento" : ym === "fim" ? (p.fim && p.fim.motivo === "perda" ? "Não recebido" : p.modo === "venc" ? "Resgate antecipado" : "Recebido de uma vez") : p.modo === "parcelas" ? `Parcela ${mesesEntre(p.inicio, ym) + 1}/${p.n}` : p.modo === "venc" ? "Vencimento" : "Rendimento do mês";
 
 // Uma linha por recebimento (em vez de "Resgate" + "Rendimento" separados)
 function itemReceb(l, comData) {
@@ -2622,6 +2796,9 @@ function itemReceb(l, comData) {
   if (l.tipo !== "resg" && r) return "";
   const i = invest(l.inv), p = planoDe(l), partes = comData === true ? [dataCurta(l.data)] : [];
   const nomeJ = p && p.modo === "parcelas" ? "juros" : "rendimento";
+  if (!r && l.progMes === "fim" && j && j.perda) return `<button class="item" data-lanc="${l.id}">${bola(i.icone, corInv(i))}
+    <span class="meio"><div>Não recebido · ${esc(i.nome)}</div><small>${comData === true ? dataCurta(l.data) + " · " : ""}perda · plano encerrado</small></span>
+    <span class="val num neg">- ${fmt(j.valor)}</span></button>`;
   if (r) { partes.push(esc(conta(r.conta).nome)); if (j) partes.push(`${j.perda ? "- " : ""}${fmt(j.valor)} de ${nomeJ}`); }
   else if (p && p.modo !== "mensal") partes.push(`<b style="color:#C62828">incompleto · toque para corrigir</b>`);
   else partes.push("reinvestido");
@@ -2639,6 +2816,11 @@ function abrirReceb(l0) {
     return (async () => { if (await confirmar("Apagar recebimento", "O plano deste recebimento não existe mais. Apagar o recebimento?", "Apagar", true)) {
       const ids = g.map((x) => x.id); S.d.lancs = S.d.lancs.filter((x) => !ids.includes(x.id)); await salvar(); aviso("Apagado."); atualizarFundo(); desenhar(); } })();
   }
+  if (base.progMes === "fim" && !r) return (async () => {
+    if (!(await confirmar("Desfazer “não vou receber”", `A perda de ${fmtR(j ? j.valor : 0)} é apagada e as parcelas voltam para “a receber”.`, "Desfazer", true))) return;
+    const ids = g.map((x) => x.id); S.d.lancs = S.d.lancs.filter((x) => !ids.includes(x.id)); delete p.fim;
+    await salvar(); aviso("Desfeito."); atualizarFundo(); desenhar();
+  })();
   const ym = base.progMes, hj = hoje(), jv = j ? (j.perda ? -j.valor : j.valor) : 0, total = r ? r.valor : 0;
   const nomeJ = p.modo === "parcelas" ? "juros" : "rendimento";
   const contas = S.d.contas.filter((c) => !ehBenef(c));
@@ -2658,7 +2840,7 @@ function abrirReceb(l0) {
   const tirar = () => { const ids = grupoReceb(base).map((x) => x.id); S.d.lancs = S.d.lancs.filter((x) => !ids.includes(x.id)); };
   $("[data-desf]", el).onclick = async () => {
     if (!(await confirmar("Desfazer recebimento", `${rotuloReceb(p, ym)} de ${inv.nome} volta para “Investimentos a receber” e o valor sai do saldo da conta.`, "Desfazer", true))) return;
-    tirar(); await salvar(); fechar(); aviso("Desfeito. Voltou para “a receber”."); atualizarFundo();
+    tirar(); if (ym === "fim") delete p.fim; await salvar(); fechar(); aviso("Desfeito. Voltou para “a receber”."); atualizarFundo();
   };
   $("[data-f]", el).onsubmit = async (e) => {
     e.preventDefault();
@@ -2709,12 +2891,16 @@ function confirmarProg(invId, planoId, ym) {
 
 function resumoProg(p) {
   if (!p) return "";
+  if (p.fim) {
+    const r = p.modo === "venc" ? `Vencimento ${dataCurta(p.data)}/${p.data.slice(0, 4)}` : p.modo === "mensal" ? "Rendimento mensal" : p.vals ? `Acordo ${descrVals(p.vals)}` : `${p.n}x de ${fmtR(p.valor)}`;
+    return `${r} · <b>${MOTIVO_FIM[p.fim.motivo] || "Encerrado"}</b> em ${dataCurta(p.fim.data)}`;
+  }
   const de = p.principal ? ` (aplicado ${fmtR(p.principal)})` : "";
   if (p.modo === "venc") return `Vence ${dataCurta(p.data)}/${p.data.slice(0, 4)} · vai receber ${fmtR(p.valor)}${de}`;
   if (p.modo === "parcelas") {
     const faltam = progFaltam(p), atr = faltam.filter((m) => m < mesAtual()).length;
     const prox = faltam.length ? `próxima: ${nomeMes(faltam[0])}` : "todas recebidas";
-    return `${p.n}x de ${fmtR(p.valor)}${de} · ${p.n - faltam.length} de ${p.n} recebidas · ${prox}${atr ? ` · <b style="color:#C62828">${atr} atrasada(s)</b>` : ""}${faltam.length ? ` · falta receber ${fmtR(faltam.length * p.valor)}` : ""}`;
+    return `${p.vals ? descrVals(p.vals) : `${p.n}x de ${fmtR(p.valor)}`}${de} · ${p.n - faltam.length} de ${p.n} recebidas · ${prox}${atr ? ` · <b style="color:#C62828">${atr} atrasada(s)</b>` : ""}${faltam.length ? ` · falta receber ${fmtR(faltaReceber(p))}` : ""}`;
   }
   return `Rendimento todo dia ${p.dia} · cerca de ${fmtR(p.valor)} por mês`;
 }
