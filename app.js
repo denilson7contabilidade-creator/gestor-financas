@@ -1,7 +1,7 @@
 "use strict";
 /* Gestor de Finanças — app instalável, dados guardados só no aparelho e criptografados. */
 
-const VERSAO_APP = "3.19";
+const VERSAO_APP = "3.20";
 const $ = (s, el = document) => el.querySelector(s);
 const esc = (t) => String(t ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const ic = (n) => `<svg class="ic" viewBox="0 0 24 24">${ICONES[n] || ICONES["circle-ellipsis"]}</svg>`;
