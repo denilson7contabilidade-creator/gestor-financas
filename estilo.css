@@ -844,3 +844,36 @@ i.lg.v, .gm i.v { background: #C9CED6; }
 .fx-ver { display: flex; align-items: center; gap: 2px; color: var(--laranja-graf); font-size: 13px; font-weight: 600; white-space: nowrap; }
 .fx-ver svg.ic { width: 16px; height: 16px; }
 .box table.ano.fx-tab { margin: 0 -14px -14px; width: calc(100% + 28px); }
+
+/* ===== v3.19: fixos — receitas fixas x despesas fixas ===== */
+.rvd { display: flex; align-items: flex-end; gap: 12px; margin-top: 14px; }
+.rvd small { font-size: 12px; color: var(--noite-tx); }
+.rvd b { display: block; font-size: 22px; font-weight: 700; }
+.rvd b.vd { color: #7CE0A6; }
+.rvd .menos { font-size: 24px; color: var(--noite-tx); padding-bottom: 2px; }
+.sobra-fx { margin-top: 12px; background: rgba(255,255,255,.07); border: 1px solid rgba(255,255,255,.11); border-radius: 14px; padding: 10px 12px; }
+.sobra-fx span { font-size: 12.5px; color: var(--noite-tx2); }
+.sobra-fx b { display: block; font-size: 24px; font-weight: 700; }
+.sobra-fx b.neg { color: #F59E9E; }
+.sobra-fx em { font-style: normal; font-size: 11.5px; color: var(--noite-tx); }
+.med { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 6px; margin-top: 10px; border-top: 1px solid #f0f0f0; padding-top: 10px; }
+.med small { font-size: 11px; color: #888; display: block; line-height: 1.25; }
+.med b { font-size: 14px; } .med b.pos { color: #1B8A4B; } .med b.neg { color: #C0392B; }
+.cab-vs, .lvs { display: grid; grid-template-columns: 34px minmax(0, 1fr) 62px 68px 62px; gap: 6px; align-items: center; }
+.cab-vs { padding: 8px 14px 0; font-size: 11.5px; color: #999; text-align: right; }
+.lvs { padding: 9px 14px; border-top: 1px solid #f4f4f4; font-size: 14px; }
+.lvs .bo-l .bola { width: 34px; height: 34px; } .lvs .bo-l .bola svg.ic { width: 17px; height: 17px; }
+.lvs .n { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lvs .a { color: #999; text-align: right; font-size: 13px; }
+.lvs b { text-align: right; font-weight: 600; white-space: nowrap; }
+.lvs .cv { justify-self: end; }
+.lvs.tot { background: #F7F9FB; }
+.cinza { color: #9AA0A8 !important; }
+.cv { font-size: 11.5px; font-weight: 700; border-radius: 99px; padding: 2px 7px; white-space: nowrap; }
+.cv.up { background: #FDECEC; color: #C0392B; } .cv.dn { background: #E7F6EE; color: #1B8A4B; } .cv.neu { background: #F0F2F5; color: #777; }
+.mud { display: flex; align-items: center; gap: 10px; font-size: 14px; padding: 6px 0; }
+@media (max-width: 380px) {
+  .cab-vs, .lvs { grid-template-columns: 0 minmax(0, 1fr) 58px 64px 56px; gap: 5px; }
+  .lvs .bo-l { visibility: hidden; width: 0; overflow: hidden; }
+  .lvs { font-size: 13.5px; }
+}
