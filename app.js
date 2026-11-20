@@ -1,7 +1,7 @@
 "use strict";
 /* Gestor de Finanças — app instalável, dados guardados só no aparelho e criptografados. */
 
-const VERSAO_APP = "3.22";
+const VERSAO_APP = "3.23";
 const $ = (s, el = document) => el.querySelector(s);
 const esc = (t) => String(t ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const ic = (n) => `<svg class="ic" viewBox="0 0 24 24">${ICONES[n] || ICONES["circle-ellipsis"]}</svg>`;
@@ -1154,6 +1154,134 @@ function verCategoria(cid, ymIni) {
   verCategoria.repintar = pintar;
 }
 
+/* ----- Enviar para IA: texto com o histórico organizado + pedido de análise ----- */
+function gerarTextoIA({ de, ate, esconder }) {
+  const hj = hoje(), am = mesAtual(), R = (v) => nf2.format((v || 0) / 100), L = [];
+  const lancsTodos = [...S.d.lancs].sort((a, b) => a.data.localeCompare(b.data));
+  const prim = lancsTodos.length ? lancsTodos[0].data.slice(0, 7) : am;
+  const ini = de || prim, fim = ate || somaMes(am, 2);
+  const meses = []; for (let m = ini; m <= fim; m = somaMes(m, 1)) meses.push(m);
+  const nomeMesC = (ym) => `${mesCurto(ym)}/${ym.slice(2, 4)}`;
+  const nInv = {}; S.d.invest.forEach((i, k) => (nInv[i.id] = esconder ? `${i.tipo || "Investimento"} ${k + 1}` : i.nome));
+  const desc = (l) => (esconder ? "" : (l.nota || "").replace(/[\n;]/g, " ").trim());
+  const ehCart = (cid) => temCartao(cid);
+  const forma = (l) => l.cartao && ehCart(l.cartao) ? `cartão ${cartao(l.cartao).nome}` : l.conta ? (S.d.contas.find((c) => c.id === l.conta) || {}).nome || "conta" : "";
+  L.push(`Você é um consultor financeiro pessoal. Abaixo estão os dados do meu app de finanças pessoais (Gestor de Finanças), gerados em ${dataCurta(hj)}/${hj.slice(0, 4)}.
+${de ? `Período enviado: ${nomeMesC(ini)} a ${nomeMesC(fim)}.` : `Envio completo: todo o histórico desde ${nomeMesC(prim)} e a previsão dos próximos meses.`}
+
+COMO LER OS DADOS
+- Valores em reais (R$), formato brasileiro (1.234,56).
+- "Despesas" são contadas no mês da compra. Compras no cartão de crédito entram no mês em que foram feitas; o pagamento da fatura NÃO é uma despesa nova (só tira o dinheiro da conta).
+- "Fixos" são contas e receitas recorrentes (aluguel, salário, assinaturas...). Meses futuros mostram o previsto.
+- Aplicações em investimentos e empréstimos que fiz NÃO são despesa: o dinheiro continua meu, guardado ou a receber.
+- "Rendimento" negativo (perda) significa dinheiro que não voltou.
+- Meses marcados com (previsto) ainda não aconteceram.
+
+O QUE EU QUERO
+1. Um diagnóstico claro e simples da minha situação financeira.
+2. Onde estou gastando demais e o que dá para cortar, com valores.
+3. Um plano prático para sobrar mais dinheiro por mês.
+4. Avalie meus fixos, cartões, investimentos e empréstimos (riscos e oportunidades).
+5. Aponte padrões, meses fora do normal e tendências.
+6. Se faltar alguma informação, me faça perguntas antes de concluir.
+`);
+  // resumo geral
+  const contas = S.d.contas.filter((c) => !ehBenef(c)), benefs = S.d.contas.filter(ehBenef);
+  const aReceber = S.d.invest.reduce((t, i) => t + progsDe(i).reduce((s, p) => s + faltaReceber(p), 0), 0);
+  const fatAberto = S.d.cartoes.reduce((t, c) => t + [am, somaMes(am, 1)].reduce((s, ym) => s + infoFatura(c.id, ym).falta, 0), 0);
+  L.push(`RESUMO GERAL (hoje, ${dataCurta(hj)}/${hj.slice(0, 4)})
+- Saldo em contas: ${R(contas.reduce((t, c) => t + saldoConta(c.id), 0))}${contas.length > 1 ? ` (${contas.map((c) => `${c.nome}: ${R(saldoConta(c.id))}`).join("; ")})` : ""}
+${benefs.length ? `- Benefícios (VA/VR): ${R(benefs.reduce((t, c) => t + saldoConta(c.id), 0))}\n` : ""}- Investido (inclui empréstimos a receber): ${R(totalInvestido())}
+- Patrimônio (contas + investimentos): ${R(patrimonio())}
+- Ainda a receber de planos/empréstimos: ${R(aReceber)}
+- Faturas de cartão em aberto (este mês e o próximo): ${R(fatAberto)}
+`);
+  // mês a mês
+  while (meses.length > 1 && meses[0] < am && !resumoMes(meses[0]).rec && !resumoMes(meses[0]).des) meses.shift();
+  const linhaM = meses.map((m) => { const r = resumoMes(m), fd = totFixos(m, "despesa"), fr = totFixos(m, "receita");
+    return `${nomeMesC(m)}${m > am ? " (previsto)" : m === am ? " (atual)" : ""}; ${R(r.rec)}; ${R(r.des)}; ${R(fd)}; ${R(fr)}; ${R(r.rec - r.des)}`; });
+  L.push(`MÊS A MÊS (mês; receitas; despesas; despesas fixas; receitas fixas; resultado)\n${linhaM.join("\n")}\n`);
+  // categorias
+  const reais = meses.filter((m) => m <= am), cats = {};
+  for (const l of S.d.lancs) if (l.tipo === "despesa" && reais.includes(l.data.slice(0, 7))) (cats[l.cat] ||= {})[l.data.slice(0, 7)] = ((cats[l.cat] || {})[l.data.slice(0, 7)] || 0) + l.valor;
+  const ult3 = reais.slice(-3), ant3 = reais.slice(-6, -3);
+  const catLin = Object.entries(cats).map(([id, pm]) => { const tot = Object.values(pm).reduce((t, v) => t + v, 0); const a = ult3.reduce((t, m) => t + (pm[m] || 0), 0) / Math.max(1, ult3.length), b = ant3.reduce((t, m) => t + (pm[m] || 0), 0) / Math.max(1, ant3.length);
+    const tend = !ant3.length || !b ? "sem comparação" : Math.abs(a - b) / b < 0.05 ? "estável" : `${a > b ? "subindo" : "caindo"} ${Math.round((Math.abs(a - b) / b) * 100)}%`;
+    return { t: `- ${cat(id).nome}: total ${R(tot)} · média ${R(tot / Math.max(1, reais.length))}/mês · últimos 3 meses ${tend}`, tot }; }).sort((x, y) => y.tot - x.tot);
+  if (catLin.length) L.push(`DESPESAS POR CATEGORIA (de ${nomeMesC(reais[0])} a ${nomeMesC(reais[reais.length - 1])})\n${catLin.map((x) => x.t).join("\n")}\n`);
+  // fixos
+  if (S.d.fixos.length) L.push(`FIXOS / RECORRENTES (valor atual; o que mudou nos últimos 3 meses)\n${S.d.fixos.filter((f) => !f.fim || f.fim > am).map((f) => {
+    const a = valorFixoMes(f, somaMes(am, -3)), b = valorFixoMes(f, am), nome = esconder ? cat(f.cat).nome : f.nota || cat(f.cat).nome;
+    return `- ${f.tipo === "despesa" ? "Despesa" : "Receita"}: ${nome} · ${R(f.valor)} · todo dia ${f.dia}${f.cartao && ehCart(f.cartao) ? ` · no cartão ${cartao(f.cartao).nome}` : ""}${a && b && a.v !== b.v ? ` · era ${R(a.v)} há 3 meses` : ""}`; }).join("\n")}\n`);
+  // cartões
+  if (S.d.cartoes.length) L.push(`CARTÕES DE CRÉDITO\n${S.d.cartoes.map((c) => {
+    const fs = Array.from({ length: 9 }, (_, k) => somaMes(am, k - 5)).map((ym) => { const f = infoFatura(c.id, ym); return f.total ? `${nomeMesC(ym)} ${R(f.total)}${ym > am ? " (prevista)" : f.falta ? " (falta pagar " + R(f.falta) + ")" : " (paga)"}` : ""; }).filter(Boolean);
+    const parc = S.d.lancs.filter((l) => l.tipo === "despesa" && l.cartao === c.id && l.parc && faturaDoLanc(l) > am).reduce((t, l) => t + l.valor, 0);
+    return `- ${c.nome} (fecha dia ${c.fechamento}, vence dia ${c.vencimento})\n  Faturas: ${fs.join(" · ") || "sem compras"}${parc ? `\n  Parcelas que ainda vão cair em faturas futuras: ${R(parc)}` : ""}`; }).join("\n")}\n`);
+  // investimentos e empréstimos
+  if (S.d.invest.length) {
+    const ivs = S.d.invest.map((i) => {
+      let rend = 0, apl = 0, res = 0;
+      for (const l of S.d.lancs) if (l.inv === i.id && l.data >= `${ini}-01`) { if (l.tipo === "rend") rend += l.perda ? -l.valor : l.valor; else if (l.tipo === "aplic") apl += l.valor; else if (l.tipo === "resg") res += l.valor; }
+      const planos = progsDe(i).filter((p) => !p.fim && faltaReceber(p) > 0).map((p) => `${p.acordo ? "acordo " : ""}${p.modo === "venc" ? `vencimento em ${dataCurta(p.data)}/${p.data.slice(2, 4)}: ${R(p.valor)}` : `${p.vals ? descrVals(p.vals) : `${p.n}x ${R(p.valor)}`}, faltam ${progFaltam(p).length} (${R(faltaReceber(p))})`}`);
+      const perdas = progsDe(i).filter((p) => p.fim && (p.fim.motivo === "perda")).length;
+      return `- ${nInv[i.id]} (${i.tipo || "investimento"}): saldo ${R(saldoInv(i.id))} · no período aplicou ${R(apl)}, resgatou ${R(res)}, rendeu ${R(rend)}${planos.length ? `\n  A receber: ${planos.join(" | ")}` : ""}${perdas ? `\n  ${perdas} plano(s) encerrado(s) como "não vou receber"` : ""}`; });
+    L.push(`INVESTIMENTOS E EMPRÉSTIMOS\n${ivs.join("\n")}\n`);
+  }
+  // próximos meses
+  const prox = [somaMes(am, 1), somaMes(am, 2), somaMes(am, 3)].map((ym) => { const r = resumoMes(ym), rec = progAReceber(ym).reduce((t, x) => t + x.valor, 0);
+    const fat = S.d.cartoes.reduce((t, c) => t + infoFatura(c.id, ym).total, 0);
+    return `- ${nomeMesC(ym)}: receitas previstas ${R(r.rec)} (inclui ${R(rec)} de recebimentos programados) · despesas previstas ${R(r.des)} · faturas que vencem ${R(fat)}`; });
+  L.push(`PRÓXIMOS MESES (previsão com o que já está cadastrado)\n${prox.join("\n")}\n`);
+  // lançamentos
+  const nomeTipo = { despesa: "despesa", receita: "receita", transf: "transferência", fatura: "pagamento de fatura", aplic: "aplicação", resg: "resgate", rend: "rendimento" };
+  let lan = lancsTodos.filter((l) => l.data.slice(0, 7) >= ini && l.data.slice(0, 7) <= fim), nota = "";
+  if (lan.length > 2500) { const corte = somaMes(am, -11); lan = lan.filter((l) => l.data.slice(0, 7) >= corte); nota = ` (só os últimos 12 meses; os anteriores estão resumidos acima)`; }
+  L.push(`LANÇAMENTOS${nota} — data; tipo; categoria; valor; conta/cartão; ${esconder ? "" : "descrição"}\n${lan.map((l) => {
+    const c = l.cat ? cat(l.cat).nome : l.inv ? nInv[l.inv] || "" : "";
+    const v = l.tipo === "rend" && l.perda ? -l.valor : l.valor;
+    return `${l.data}; ${nomeTipo[l.tipo] || l.tipo}${l.parc ? ` ${l.parc.n}/${l.parc.t}` : ""}${l.tipo === "rend" && l.perda ? " (perda)" : ""}; ${c}; ${R(v)}; ${forma(l)}${esconder ? "" : "; " + desc(l)}`; }).join("\n")}`);
+  return L.join("\n");
+}
+
+function abrirEnviarIA() {
+  let tudo = true, esconder = true, de = somaMes(mesAtual(), -5), ate = mesAtual();
+  const el = abrirCamada(`<div data-iac></div>`);
+  const pintar = () => {
+    const prim = S.d.lancs.reduce((m, l) => (l.data < m ? l.data : m), hoje()).slice(0, 7);
+    $("[data-iac]", el).innerHTML = `<div class="ia-cab"><span class="ia-ic">${ic("sparkles")}</span><div><b>Peça uma análise para a sua IA</b><small>Envia todo o seu histórico, já organizado, para o ChatGPT, Claude ou Gemini.</small></div></div>
+      <div class="seg3"><button data-tudo="1" class="${tudo ? "on" : ""}">Tudo (completo)</button><button data-tudo="0" class="${tudo ? "" : "on"}">Só um período</button></div>
+      ${tudo ? "" : `<div class="dois"><label>De<input type="month" name="de" value="${de}"></label><label>Até<input type="month" name="ate" value="${ate}"></label></div>`}
+      <div class="inc">${["Resumo geral e patrimônio", tudo ? `Mês a mês desde ${mesCurto(prim)}/${prim.slice(2, 4)}` : "Mês a mês do período", "Categorias, fixos e cartões", "Investimentos e empréstimos", "Previsão dos próximos meses", "Lançamentos detalhados"].map((t) => `<div>${ic("check")}<span>${t}</span></div>`).join("")}</div>
+      <label class="tog"><span><b>Esconder nomes e descrições</b><small>Troca nomes de pessoas e descrições por “Empréstimo 1”, só a categoria etc.</small></span><input type="checkbox" data-esc ${esconder ? "checked" : ""}><i class="sw"></i></label>
+      <p class="aviso-ia">${ic("eye-off")}<span>Os dados saem do seu celular quando você envia para a IA.</span></p>
+      <div class="bts2"><button class="btn contorno" data-copiar>${ic("list")}Copiar texto</button><button class="btn preto" data-enviar>${ic("share-2")}Enviar para app</button></div>`;
+    el.querySelectorAll("[data-tudo]").forEach((b) => (b.onclick = () => { tudo = b.dataset.tudo === "1"; pintar(); }));
+    const fd = $("input[name=de]", el), fa = $("input[name=ate]", el);
+    if (fd) fd.onchange = () => { de = fd.value || de; if (de > ate) ate = de; pintar(); };
+    if (fa) fa.onchange = () => { ate = fa.value || ate; if (ate < de) de = ate; pintar(); };
+    $("[data-esc]", el).onchange = (e) => { esconder = e.target.checked; };
+    const texto = () => gerarTextoIA(tudo ? { esconder } : { de, ate, esconder });
+    $("[data-copiar]", el).onclick = async () => {
+      const t = texto();
+      try { await navigator.clipboard.writeText(t); }
+      catch { const ta = document.createElement("textarea"); ta.value = t; document.body.appendChild(ta); ta.select(); document.execCommand("copy"); ta.remove(); }
+      aviso(t.length > 60000 ? "Copiado! O texto é grande: se a IA cortar, use “Enviar para app” (vai como arquivo)." : "Copiado! Agora é só colar na sua IA.");
+    };
+    $("[data-enviar]", el).onclick = async () => {
+      const t = texto(), nome = `financas-para-ia-${hoje()}.txt`;
+      const arq = new File([t], nome, { type: "text/plain" });
+      try {
+        if (t.length > 20000 && navigator.canShare && navigator.canShare({ files: [arq] })) return await navigator.share({ files: [arq], title: "Minhas finanças", text: "Analise minhas finanças (dados no arquivo)." });
+        if (navigator.share) return await navigator.share({ title: "Minhas finanças", text: t });
+      } catch (e) { if (e && e.name === "AbortError") return; }
+      const a = document.createElement("a"); a.href = URL.createObjectURL(arq); a.download = nome; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+      aviso("Arquivo salvo. Anexe ele na sua IA.");
+    };
+  };
+  pintar();
+}
+
 /* ----- Relatórios com 3 filtros: Período · Relatório · Detalhe ----- */
 function gastosPorCat(ym, tipo = "despesa") {
   const o = {};
@@ -1499,7 +1627,7 @@ function telaRelatorios() {
   const P = infoPer(f.per), [, rot, ico] = relInfo(f.rel);
   const r = { gastos: relGastos, es: relES, cartoes: relCartoes, inv: relInv, comp: relComp }[f.rel](P, f.det);
   const pil = (attr, icone, txt, on = true) => `<button class="fp${on ? " on" : ""}" ${attr}>${ic(icone)}<span>${esc(txt)}</span>${ic("chevron-down", "seta")}</button>`;
-  return `<header class="topo-n rel-topo"><div class="tn-linha"><div class="ola">Seus números<b>Relatórios</b></div></div>
+  return `<header class="topo-n rel-topo"><div class="tn-linha"><div class="ola">Seus números<b>Relatórios</b></div><button class="ia-pill" data-ia>${ic("sparkles")}Enviar para IA</button></div>
       <div class="fbar">${pil("data-fper", "calendar", P.rot)}${pil("data-frel", ico, rot)}${pil("data-fdet", "search", rotuloDetalhe(f.rel, f.det), !!f.det)}</div>
       ${r.k}</header>
     <div class="conteudo rel-corpo" id="relcorpo">${r.corpo}
@@ -1541,6 +1669,7 @@ ligar.relatorios = () => {
   const f = filtroRel();
   const ir = () => { guardarFiltro(); desenhar(); };
   $("[data-fper]").onclick = escolherPeriodo;
+  $("[data-ia]").onclick = abrirEnviarIA;
   $("[data-frel]").onclick = async () => { const v = await escolher("O que você quer ver?", RELS.map(([valor, rotulo, icone, sub]) => ({ valor, rotulo, icone, sub })), f.rel); if (v && v !== f.rel) { f.rel = v; f.det = ""; if (v === "comp" && f.per.t === "mes") f.per = { t: "ult", n: 6 }; ir(); } };
   $("[data-fdet]").onclick = async () => { const v = await escolher("Detalhe", opcoesDetalhe(f.rel), f.det); if (v !== null && v !== undefined) { f.det = v; ir(); } };
   // deslizar troca o período (mês ou ano)

@@ -958,3 +958,24 @@ label.ac-pl .mm { flex: 1; min-width: 0; }
 .fora-plano svg.ic { width: 15px; height: 15px; flex: none; margin-top: 1px; }
 .ac-tot small { display: block; font-size: 11.5px; color: #888; font-weight: 400; margin-top: 2px; }
 .seta-ac { display: inline-flex; transition: transform .2s; } .seta-ac.ab { transform: rotate(180deg); }
+
+/* ===== v3.23: Enviar para IA ===== */
+.ia-pill { display: flex; align-items: center; gap: 6px; background: linear-gradient(135deg, #F59A5C, #D9652B); color: #fff; font-weight: 700; font-size: 13px; border-radius: 99px; padding: 8px 13px; box-shadow: 0 4px 12px rgba(217,101,43,.35); white-space: nowrap; }
+.ia-pill svg.ic { width: 16px; height: 16px; }
+.ia-cab { display: flex; gap: 12px; align-items: center; padding: 12px; border-radius: 16px; background: linear-gradient(135deg, #FFF3EA, #FFE4D2); border: 1.5px solid #F5B48A; margin-bottom: 12px; }
+.ia-cab b { display: block; font-size: 16px; } .ia-cab small { font-size: 12.5px; color: #7a5a45; line-height: 1.35; display: block; margin-top: 2px; }
+.ia-ic { width: 44px; height: 44px; border-radius: 12px; background: linear-gradient(135deg, #F59A5C, #D9652B); color: #fff; display: grid; place-items: center; flex: none; }
+.ia-ic svg.ic { width: 22px; height: 22px; }
+.inc { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 10px; margin: 12px 0; font-size: 12.5px; color: #444; }
+.inc div { display: flex; gap: 5px; align-items: flex-start; } .inc svg.ic { width: 14px; height: 14px; color: #1B8A4B; flex: none; margin-top: 1px; }
+label.tog { display: flex !important; flex-direction: row; align-items: center; gap: 12px; padding: 10px 0; border-top: 1px solid #f0f0f0; margin: 0; text-align: left; font-weight: 400; color: inherit; cursor: pointer; }
+.tog > span { flex: 1; } .tog b { font-size: 14px; display: block; } .tog small { font-size: 12px; color: #888; }
+.tog input { position: absolute; opacity: 0; pointer-events: none; }
+.tog .sw { width: 44px; height: 26px; border-radius: 99px; background: #ccc; position: relative; flex: none; transition: background .2s; }
+.tog .sw::after { content: ""; position: absolute; top: 3px; left: 3px; width: 20px; height: 20px; border-radius: 50%; background: #fff; transition: left .2s; }
+.tog input:checked + .sw { background: #D9652B; } .tog input:checked + .sw::after { left: 21px; }
+.aviso-ia { display: flex; gap: 8px; align-items: center; font-size: 12px; color: #8A5A00; background: #FFF6E5; border-radius: 10px; padding: 8px 10px; margin: 4px 0 12px; }
+.aviso-ia svg.ic { width: 15px; height: 15px; flex: none; }
+.bts2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.bts2 .btn { display: flex; align-items: center; justify-content: center; gap: 6px; margin: 0; }
+.bts2 svg.ic { width: 17px; height: 17px; }
