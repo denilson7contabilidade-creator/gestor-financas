@@ -1,7 +1,7 @@
 "use strict";
 /* Gestor de Finanças — app instalável, dados guardados só no aparelho e criptografados. */
 
-const VERSAO_APP = "3.24";
+const VERSAO_APP = "3.25";
 const $ = (s, el = document) => el.querySelector(s);
 const esc = (t) => String(t ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const ic = (n) => `<svg class="ic" viewBox="0 0 24 24">${ICONES[n] || ICONES["circle-ellipsis"]}</svg>`;
@@ -1524,7 +1524,7 @@ function valorFixoMes(f, ym) {
 const totFixos = (ym, tipo) => S.d.fixos.filter((f) => f.tipo === tipo).reduce((t, f) => { const x = valorFixoMes(f, ym); return t + (x ? x.v : 0); }, 0);
 function relFixos(P, meses) {
   if (!S.d.fixos.length) return { k: "", corpo: `<p class="vazio">${ic("repeat")}Nenhum lançamento fixo cadastrado.<br>Cadastre em Perfil → Lançamentos recorrentes.</p>` };
-  const am = mesAtual(), ref = meses.includes(am) ? am : meses[meses.length - 1], ant = somaMes(ref, -1);
+  const am = mesAtual(), ref = P.mes || (meses.includes(am) ? am : meses[meses.length - 1]), ant = somaMes(ref, -1);
   const rf = totFixos(ref, "receita"), df = totFixos(ref, "despesa"), sobra = rf - df;
   const k = `<div class="rvd"><div><small>Receitas fixas</small><b class="num vd">${fmt(rf)}</b></div><span class="menos">−</span><div><small>Despesas fixas</small><b class="num">${fmt(df)}</b></div></div>
     <div class="sobra-fx"><span>Sobra depois dos fixos em ${mesCurto(ref)}.</span><b class="num ${sobra < 0 ? "neg" : ""}">${sobra < 0 ? "− " : ""}${fmtR(Math.abs(sobra))}</b>
