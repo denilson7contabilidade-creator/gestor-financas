@@ -1021,3 +1021,9 @@ label.tog { display: flex !important; flex-direction: row; align-items: center; 
 .vm-leg i { width: 11px; height: 11px; border-radius: 4px; display: block; }
 .vm-leg i.r { background: #E7F6EE; border: 1.5px solid #BFE6CF; } .vm-leg i.p { border: 1.5px dashed #bbb; }
 .var-m small .nw, .var-m small b.acima { white-space: nowrap; }
+
+/* v3.28 — livres no relatório de fixos */
+.rvd.rvd3 { gap: 8px; } .rvd.rvd3 b { font-size: 20px; } .rvd.rvd3 .menos { font-size: 20px; }
+.rvd b.lv { color: #8EC5FF; }
+i.lg.l { background: #8EC5FF; }
+.gm .p i.l { background: repeating-linear-gradient(45deg, #8EC5FF 0 3px, #cfe5ff 3px 6px); }

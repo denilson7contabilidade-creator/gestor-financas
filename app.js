@@ -1,7 +1,7 @@
 "use strict";
 /* Gestor de Finanças — app instalável, dados guardados só no aparelho e criptografados. */
 
-const VERSAO_APP = "3.27";
+const VERSAO_APP = "3.28";
 const $ = (s, el = document) => el.querySelector(s);
 const esc = (t) => String(t ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const ic = (n) => `<svg class="ic" viewBox="0 0 24 24">${ICONES[n] || ICONES["circle-ellipsis"]}</svg>`;
@@ -612,10 +612,16 @@ function telaCodigo(codigo, novaConta) {
 /* ================= TELAS PRINCIPAIS ================= */
 
 // Cartões (e benefícios) mais usados primeiro: soma das compras dos últimos 3 meses; empate = o mais novo
+// Ordem dos cartões e benefícios: o último usado primeiro, depois pelo uso mais recente.
+// Conta a data da compra (parcelada: só a 1ª parcela) até hoje; no mesmo dia, o lançado por último. Nunca usados: o mais novo primeiro.
 function ordenarPorUso() {
-  const de = `${somaMes(mesAtual(), -2)}-01`, uso = {};
-  for (const l of S.d.lancs) if (l.tipo === "despesa" && l.data >= de) { const k = l.cartao || l.conta; if (k) uso[k] = (uso[k] || 0) + l.valor; }
-  const ord = (arr) => arr.map((x, i) => ({ x, i })).sort((a, b) => (uso[b.x.id] || 0) - (uso[a.x.id] || 0) || b.i - a.i).map((o) => o.x);
+  const hj = hoje(), uso = {};
+  S.d.lancs.forEach((l, i) => {
+    if (l.tipo !== "despesa" || l.data > hj || (l.parc && l.parc.n !== 1)) return;
+    const k = l.cartao || l.conta, chave = l.data + String(i).padStart(7, "0");
+    if (k && (!uso[k] || chave > uso[k])) uso[k] = chave;
+  });
+  const ord = (arr) => arr.map((x, i) => ({ x, i })).sort((a, b) => { const ua = uso[a.x.id] || "", ub = uso[b.x.id] || ""; return ua === ub ? b.i - a.i : ub > ua ? 1 : -1; }).map((o) => o.x);
   S.d.cartoes = ord(S.d.cartoes);
   // contas comuns ficam na ordem; entre os benefícios, o mais usado primeiro
   const ben = ord(S.d.contas.filter(ehBenef)); let k = 0;
@@ -1552,20 +1558,25 @@ const totFixos = (ym, tipo) => S.d.fixos.filter((f) => f.tipo === tipo).reduce((
 function relFixos(P, meses) {
   if (!S.d.fixos.length) return { k: "", corpo: `<p class="vazio">${ic("repeat")}Nenhum lançamento fixo cadastrado.<br>Cadastre em Perfil → Lançamentos recorrentes.</p>` };
   const am = mesAtual(), ref = P.mes || (meses.includes(am) ? am : meses[meses.length - 1]), ant = somaMes(ref, -1);
-  const rf = totFixos(ref, "receita"), df = totFixos(ref, "despesa"), sobra = rf - df;
-  const k = `<div class="rvd"><div><small>Receitas fixas</small><b class="num vd">${fmt(rf)}</b></div><span class="menos">−</span><div><small>Despesas fixas</small><b class="num">${fmt(df)}</b></div></div>
-    <div class="sobra-fx"><span>Sobra depois dos fixos em ${mesCurto(ref)}.</span><b class="num ${sobra < 0 ? "neg" : ""}">${sobra < 0 ? "− " : ""}${fmtR(Math.abs(sobra))}</b>
-      <em>${rf ? `os fixos comem ${Math.round((df / rf) * 100)}% da sua renda fixa` : "cadastre seu salário como receita fixa para ver quanto sobra"}</em></div>`;
+  // Livres = recorrentes de despesa sem data e valor fixos (previsão até virar real)
+  const ehLivre = (f) => f.varia === "varias" && f.tipo === "despesa";
+  const livres = (ym) => { let v = 0, aprox = false; for (const f of S.d.fixos.filter(ehLivre)) { const x = valorFixoMes(f, ym); if (x) { v += x.v; if (x.st !== "ok") aprox = true; } } return { v, aprox }; };
+  const fixasSem = (ym) => totFixos(ym, "despesa") - livres(ym).v;
+  const temLivre = S.d.fixos.some(ehLivre);
+  const rf = totFixos(ref, "receita"), lv = livres(ref), df = fixasSem(ref), sobra = rf - df - lv.v;
+  const k = `<div class="rvd ${temLivre ? "rvd3" : ""}"><div><small>Receitas fixas</small><b class="num vd">${fmt(rf)}</b></div><span class="menos">−</span><div><small>Despesas fixas</small><b class="num">${fmt(df)}</b></div>${temLivre ? `<span class="menos">−</span><div><small>Livres</small><b class="num lv">${lv.aprox && lv.v ? "~" : ""}${fmt(lv.v)}</b></div>` : ""}</div>
+    <div class="sobra-fx"><span>Sobra depois dos fixos${temLivre ? " e livres" : ""} em ${mesCurto(ref)}.</span><b class="num ${sobra < 0 ? "neg" : ""}">${sobra < 0 ? "− " : ""}${fmtR(Math.abs(sobra))}</b>
+      <em>${!rf ? "cadastre seu salário como receita fixa para ver quanto sobra" : temLivre ? `fixos ${Math.round((df / rf) * 100)}% + livres ${Math.round((lv.v / rf) * 100)}% da sua renda fixa` : `os fixos comem ${Math.round((df / rf) * 100)}% da sua renda fixa`}</em></div>`;
   // gráfico: receitas fixas x despesas fixas, mês a mês
   let comecou = false;
-  const serie = meses.map((m) => ({ m, r: totFixos(m, "receita"), d: totFixos(m, "despesa") }))
-    .filter((x) => { if (!comecou && !x.r && !x.d) return false; comecou = true; return true; });
-  const mx = Math.max(1, ...serie.map((x) => Math.max(x.r, x.d)));
-  const com = serie.filter((x) => x.r || x.d), n = Math.max(1, com.length);
-  const mR = com.reduce((t, x) => t + x.r, 0) / n, mD = com.reduce((t, x) => t + x.d, 0) / n;
-  let corpo = `<div class="box"><h3>Receitas fixas x despesas fixas<span><i class="lg r"></i>Receitas <i class="lg d"></i>Despesas</span></h3>
-    <div class="grafb">${serie.map((x) => `<button class="gm ${x.m === ref ? "on" : ""}" data-irmes="${x.m}"><span class="p"><i class="r" style="height:${(x.r / mx) * 100}%"></i><i class="d" style="height:${(x.d / mx) * 100}%"></i></span><small>${mesCurto(x.m)}</small></button>`).join("")}</div>
-    <div class="med"><div><small>Média receitas fixas</small><b class="num">${fmt(mR)}</b></div><div><small>Média despesas fixas</small><b class="num">${fmt(mD)}</b></div><div><small>Média sobra</small><b class="num ${mR - mD < 0 ? "neg" : "pos"}">${mR - mD < 0 ? "− " : ""}${fmt(Math.abs(mR - mD))}</b></div></div></div>`;
+  const serie = meses.map((m) => { const l = livres(m).v; return { m, r: totFixos(m, "receita"), d: totFixos(m, "despesa") - l, l }; })
+    .filter((x) => { if (!comecou && !x.r && !x.d && !x.l) return false; comecou = true; return true; });
+  const mx = Math.max(1, ...serie.map((x) => Math.max(x.r, x.d, x.l)));
+  const com = serie.filter((x) => x.r || x.d || x.l), n = Math.max(1, com.length);
+  const mR = com.reduce((t, x) => t + x.r, 0) / n, mD = com.reduce((t, x) => t + x.d + x.l, 0) / n;
+  let corpo = `<div class="box"><h3>Receitas fixas x despesas${temLivre ? "" : " fixas"}<span><i class="lg r"></i>Receitas <i class="lg d"></i>${temLivre ? "Fixas" : "Despesas"}${temLivre ? ` <i class="lg l"></i>Livres` : ""}</span></h3>
+    <div class="grafb">${serie.map((x) => `<button class="gm ${x.m === ref ? "on" : ""}" data-irmes="${x.m}"><span class="p"><i class="r" style="height:${(x.r / mx) * 100}%"></i><i class="d" style="height:${(x.d / mx) * 100}%"></i>${temLivre ? `<i class="l" style="height:${(x.l / mx) * 100}%"></i>` : ""}</span><small>${mesCurto(x.m)}</small></button>`).join("")}</div>
+    <div class="med"><div><small>Média receitas fixas</small><b class="num">${fmt(mR)}</b></div><div><small>Média despesas${temLivre ? " (fixas + livres)" : " fixas"}</small><b class="num">${fmt(mD)}</b></div><div><small>Média sobra</small><b class="num ${mR - mD < 0 ? "neg" : "pos"}">${mR - mD < 0 ? "− " : ""}${fmt(Math.abs(mR - mD))}</b></div></div></div>`;
   // cada fixo: mês passado → este mês
   const chip = (a, b, tipo) => {
     if (a === null) return `<span class="cv neu">novo</span>`;
@@ -1583,7 +1594,7 @@ function relFixos(P, meses) {
       if (!va && !vb) continue;
       const a = va && va.st !== "pulou" ? va.v : (va ? 0 : null), b = vb && vb.st !== "pulou" ? vb.v : (vb ? 0 : null);
       const c = cat(f.cat), nome = f.nota || c.nome;
-      linhas.push(`<div class="lvs"><span class="bo-l">${bola(c.icone, c.cor)}</span><span class="n">${esc(nome)}${f.varia ? `<small class="lvs-v">varia</small>` : ""}</span>
+      linhas.push(`<div class="lvs"><span class="bo-l">${bola(c.icone, c.cor)}</span><span class="n">${esc(nome)}${f.varia ? `<small class="lvs-v">livre</small>` : ""}</span>
         <span class="a num">${a === null ? "—" : va.st === "pulou" ? "pulou" : fmt(a)}</span><b class="num ${vb && (vb.st === "prev" || vb.st === "parc") ? "cinza" : ""}">${b === null ? "—" : vb.st === "pulou" ? "pulou" : fmt(b)}</b>${chip(va && va.st === "pulou" ? 0 : a, vb && vb.st === "pulou" ? null : b, tipo)}</div>`);
       // frases do "o que mais mudou"
       const A = a || 0, B = b || 0, d = B - A;
@@ -1616,13 +1627,13 @@ function relFixos(P, meses) {
       if (x.st === "parc") return `<div class="vm-c m"><small>${mesCurto(ym)}</small><b class="num">${fmt(x.v)}</b><em>já foi ${fmt(x.real)}</em></div>`;
       return `<div class="vm-c p"><small>${mesCurto(ym)}</small><b class="num">${fmt(x.v)}</b><em>previsto</em></div>`;
     };
-    corpo += `<div class="box"><h3>Recorrentes sem data e valor fixos</h3>${vs.map((f) => { const c = cat(f.cat); return `<div class="vm-l"><div class="vm-t">${bola(c.icone, c.cor)}<span><b>${esc(f.nota || c.nome)}</b><small>Sua previsão: ${fmtR(f.valor)} · sem data fixa</small></span></div>
+    corpo += `<div class="box"><h3>Livres mês a mês</h3>${vs.map((f) => { const c = cat(f.cat); return `<div class="vm-l"><div class="vm-t">${bola(c.icone, c.cor)}<span><b>${esc(f.nota || c.nome)}</b><small>Sua previsão: ${fmtR(f.valor)}</small></span></div>
       <div class="vm-g">${[-3, -2, -1, 0, 1].map((i) => cel(f, somaMes(ref, i))).join("")}</div></div>`; }).join("")}
       <div class="vm-leg"><span><i class="r"></i>valor real</span><span><i class="p"></i>previsão</span></div></div>`;
   }
   const top = mudancas.sort((a, b) => b.p - a.p).slice(0, 4);
   if (top.length) corpo += `<div class="box"><h3>O que mais mudou</h3>${top.map((x) => `<div class="mud">${x.v}<span>${x.t}</span></div>`).join("")}</div>`;
-  corpo += `<p class="rel-nota">Valores em <span class="cinza">cinza</span> ainda não foram confirmados (é o valor cadastrado do fixo).${S.d.fixos.some((f) => f.varia === "varias") ? " Nos recorrentes sem data e valor fixos, mês que já passou mostra só o valor real; o mês atual mostra o já lançado mais o que falta até a sua previsão." : ""}</p>`;
+  corpo += `<p class="rel-nota">Valores em <span class="cinza">cinza</span> ainda não foram confirmados (é o valor cadastrado do fixo).${S.d.fixos.some((f) => f.varia === "varias") ? " Nos livres, mês que já passou mostra só o valor real; o mês atual mostra o já lançado mais o que falta até a sua previsão." : ""}</p>`;
   return { k, corpo };
 }
 
