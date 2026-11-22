@@ -1,7 +1,7 @@
 "use strict";
 /* Gestor de Finanças — app instalável, dados guardados só no aparelho e criptografados. */
 
-const VERSAO_APP = "3.26";
+const VERSAO_APP = "3.25";
 const $ = (s, el = document) => el.querySelector(s);
 const esc = (t) => String(t ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const ic = (n) => `<svg class="ic" viewBox="0 0 24 24">${ICONES[n] || ICONES["circle-ellipsis"]}</svg>`;
@@ -660,7 +660,7 @@ function resumoMes(ym) {
     } else if (l.tipo === "receita") { if (l.data <= hj) r.recOk += l.valor; else r.recFalta += l.valor; }
     else if (l.tipo === "resg" && l.prog) r.recOk += l.valor;
   }
-  for (const f of [...fixosPendentes(ym), ...variaPendentes(ym)]) {
+  for (const f of fixosPendentes(ym)) {
     if (f.tipo === "receita") r.recFalta += f.valor;
     else if (fixoNaFaturaSeguinte(f, ym)) { r.desCartao += f.valor; fats.add(faturaDe(f.cartao, dataFixo(f, ym))); }
     else r.desAPagar += f.valor;
@@ -711,23 +711,6 @@ function blocosMes(r) {
   return r.rec > r.des ? rec + des : des + rec;
 }
 
-// Início: recorrentes que variam (várias vezes no mês): quanto já foi, a previsão e o "+" para lançar mais um
-function blocoVaria(ym) {
-  const fs = S.d.fixos.filter((f) => f.varia === "varias" && fixoAtivo(f, ym));
-  if (!fs.length) return "";
-  const passado = ym < mesAtual();
-  return `<div class="var-box"><div class="var-cab"><b>${fs.some((f) => f.tipo === "receita") ? "Recorrentes que variam" : "Gastos do mês que variam"}</b><span>previsão sua</span></div>${fs.map((f) => {
-    const c = cat(f.cat), ls = lancsVaria(f, ym), real = somaV(ls), dif = real - f.valor, n = ls.length, des = f.tipo === "despesa";
-    const pc = f.valor ? Math.min(100, (real / f.valor) * 100) : 100;
-    const qt = n ? `${n} ${des ? (n > 1 ? "lançamentos" : "lançamento") : (n > 1 ? "recebimentos" : "recebimento")}` : "nada lançado";
-    const st = passado ? (dif > 0 ? `<b class="acima">${fmt(dif)} acima</b>` : dif < 0 ? `${fmt(-dif)} abaixo` : "igual à previsão")
-      : dif > 0 ? `<b class="acima">${fmt(dif)} acima</b>` : dif < 0 ? `<span class="nw">faltam ~${fmt(-dif)}</span>` : "bateu a previsão";
-    return `<div class="var-i"><button class="var-abrir" data-varver="${f.id}">${bola(c.icone, c.cor)}<span class="var-m"><span class="var-t"><span>${esc(f.nota || c.nome)}</span><b class="num">${fmt(real)}</b></span>
-      <span class="var-b"><i class="${dif > 0 && des ? "acima" : ""}" style="width:${pc}%"></i></span><small>${qt} · previsão ${fmt(f.valor)} · ${st}</small></span></button>
-      ${passado ? "" : `<button class="var-mais" data-varia="${f.id}" aria-label="Lançar">${ic("plus")}</button>`}</div>`;
-  }).join("")}</div>`;
-}
-
 function telaInicio() {
   const [a, m] = S.mes.split("-");
   const hj = hoje();
@@ -741,7 +724,7 @@ function telaInicio() {
   for (const f of fixosPendentes(S.mes)) {
     const c = cat(f.cat), cart = temCartao(f.cartao);
     pend.push({ data: dataFixo(f, S.mes), html: `<div class="item pendente"><button class="pend-abrir" data-fixo="${f.id}">${bola(c.icone, c.cor)}
-      <span class="meio"><div>${esc(f.nota || c.nome)}</div><small>${ic("repeat")}${f.varia ? "Varia · previsão" : "Fixo"}${f.nota ? " · " + esc(c.nome) : ""}${cart ? ` · ${ic("credit-card")}${esc(cartao(f.cartao).nome)}` : ""}</small></span></button>
+      <span class="meio"><div>${esc(f.nota || c.nome)}</div><small>${ic("repeat")}Fixo${f.nota ? " · " + esc(c.nome) : ""}${cart ? ` · ${ic("credit-card")}${esc(cartao(f.cartao).nome)}` : ""}</small></span></button>
       <div class="pend-dir"><span class="val num">${f.tipo === "despesa" ? "- " : "+ "}${fmt(f.valor)}</span><button class="pend-conf" data-confirmar="${f.id}">${ic("check")}Confirmar</button></div></div>` });
   }
   for (const x of progAReceber(S.mes)) {
@@ -758,7 +741,7 @@ function telaInicio() {
       <div class="pend-dir"><span class="val num">- ${fmt(f.falta)}</span><button class="pend-conf" data-pagar="${c.id}">Pagar</button></div></div>` });
   }
 
-  let corpo = lembreteBackup() + cartaoFamilia() + blocoVaria(S.mes);
+  let corpo = lembreteBackup() + cartaoFamilia();
   const mesNome = MESES[m - 1].charAt(0).toUpperCase() + MESES[m - 1].slice(1);
   if (doMes.length || pend.length) {
     corpo += `<div class="lista-cab"><b>${mesNome}, ${porLanc ? "últimos lançados" : "dia a dia"}</b><button data-ordini="${porLanc ? "dia" : "lanc"}">${porLanc ? "Ver dia a dia" : "Últimos lançados"}</button></div>`;
@@ -986,11 +969,7 @@ ligar.inicio = () => {
     const po = e.target.closest("[data-progok]");
     if (po) { const [iv, pl, pm] = po.dataset.progok.split("|"); return confirmarProg(iv, pl, pm || S.mes); }
     const ok = e.target.closest("[data-confirmar]");
-    if (ok) { const f = fixoPorId(ok.dataset.confirmar); return f && f.varia ? abrirEditor(null, { fixo: f, ym: S.mes }) : confirmarFixoRapido(ok.dataset.confirmar, S.mes); }
-    const vv = e.target.closest("[data-varver]");
-    if (vv) { const f = fixoPorId(vv.dataset.varver); return verLista(f.nota || cat(f.cat).nome, lancsVaria(f, S.mes), `${nomeMes(S.mes)} · previsão ${fmtR(f.valor)}`); }
-    const va = e.target.closest("[data-varia]");
-    if (va) return abrirEditor(null, { varia: fixoPorId(va.dataset.varia), ym: S.mes });
+    if (ok) return confirmarFixoRapido(ok.dataset.confirmar, S.mes);
     const pg = e.target.closest("[data-pagar]");
     if (pg) return pagarFatura(pg.dataset.pagar, S.mes);
     const vf = e.target.closest("[data-verfat]");
@@ -1244,7 +1223,7 @@ ${benefs.length ? `- Benefícios (VA/VR): ${R(benefs.reduce((t, c) => t + saldoC
   // fixos
   if (S.d.fixos.length) L.push(`FIXOS / RECORRENTES (valor atual; o que mudou nos últimos 3 meses)\n${S.d.fixos.filter((f) => !f.fim || f.fim > am).map((f) => {
     const a = valorFixoMes(f, somaMes(am, -3)), b = valorFixoMes(f, am), nome = esconder ? cat(f.cat).nome : f.nota || cat(f.cat).nome;
-    return `- ${f.tipo === "despesa" ? "Despesa" : "Receita"}: ${nome} · ${f.varia ? `valor muda todo mês, previsão ${R(f.valor)}${f.varia === "varias" ? ` · várias vezes no mês (este mês até agora ${R(somaV(lancsVaria(f, am)))})` : ` · todo dia ${f.dia}`}` : `${R(f.valor)} · todo dia ${f.dia}`}${f.cartao && ehCart(f.cartao) ? ` · no cartão ${cartao(f.cartao).nome}` : ""}${!f.varia && a && b && a.v !== b.v ? ` · era ${R(a.v)} há 3 meses` : ""}`; }).join("\n")}\n`);
+    return `- ${f.tipo === "despesa" ? "Despesa" : "Receita"}: ${nome} · ${R(f.valor)} · todo dia ${f.dia}${f.cartao && ehCart(f.cartao) ? ` · no cartão ${cartao(f.cartao).nome}` : ""}${a && b && a.v !== b.v ? ` · era ${R(a.v)} há 3 meses` : ""}`; }).join("\n")}\n`);
   // cartões
   if (S.d.cartoes.length) L.push(`CARTÕES DE CRÉDITO\n${S.d.cartoes.map((c) => {
     const fs = Array.from({ length: 9 }, (_, k) => somaMes(am, k - 5)).map((ym) => { const f = infoFatura(c.id, ym); return f.total ? `${nomeMesC(ym)} ${R(f.total)}${ym > am ? " (prevista)" : f.falta ? " (falta pagar " + R(f.falta) + ")" : " (paga)"}` : ""; }).filter(Boolean);
@@ -1383,7 +1362,7 @@ function dadosGastos(P, det) {
   const hj = hoje(), jaFoi = criarJaFoi(hj);
   const passa = (x) => !det ? true : det.startsWith("cat:") ? x.cat === det.slice(4) : det === "cartao" ? temCartao(x.cartao) : !temCartao(x.cartao);
   const itens = S.d.lancs.filter((l) => l.tipo === "despesa" && naFaixa(l, P) && passa(l));
-  const fixos = P.int ? [] : P.meses.flatMap((ym) => [...fixosPendentes(ym), ...variaPendentes(ym)].filter((f) => f.tipo === "despesa" && passa(f)).map((f) => ({ ...f, ym, data: dataFixo(f, ym) })));
+  const fixos = P.int ? [] : P.meses.flatMap((ym) => fixosPendentes(ym).filter((f) => f.tipo === "despesa" && passa(f)).map((f) => ({ ...f, ym, data: dataFixo(f, ym) })));
   let pago = 0, aPagar = 0, cart = 0;
   for (const l of itens) { if (jaFoi(l)) pago += l.valor; else if (vaiPraFaturaSeguinte(l, l.data.slice(0, 7))) cart += l.valor; else aPagar += l.valor; }
   for (const f of fixos) { if (fixoNaFaturaSeguinte(f, f.ym)) cart += f.valor; else aPagar += f.valor; }
@@ -1412,7 +1391,7 @@ function relGastos(P, det) {
       relGastos.ben = ben;
     }
     if (g.fixos.length) corpo += `<div class="box"><h3>Fixos ainda não confirmados<span>${fmt(somaV(g.fixos))}</span></h3>${g.fixos.map((f) => { const c = cat(f.cat);
-      return `<div class="rl"><span>${esc(f.nota || c.nome)}<small>${f.ehVaria ? `varia · falta até a previsão de ${fmt(f.previsao)}` : `dia ${dataCurta(f.data)}`}</small></span><b class="num">${fmt(f.valor)}</b></div>`; }).join("")}</div>`;
+      return `<div class="rl"><span>${esc(f.nota || c.nome)}<small>dia ${dataCurta(f.data)}</small></span><b class="num">${fmt(f.valor)}</b></div>`; }).join("")}</div>`;
   }
   return { k, corpo };
 }
@@ -1536,12 +1515,6 @@ function relInv(P, det) {
 /* --- Fixos (recorrentes) no comparativo --- */
 // Valor de um fixo num mês: o que foi confirmado; se ainda não, o valor cadastrado (previsto)
 function valorFixoMes(f, ym) {
-  if (f.varia === "varias") {
-    if (!fixoAtivo(f, ym)) return null;
-    const real = somaV(lancsVaria(f, ym)), am = mesAtual();
-    if (ym < am || real >= f.valor) return { v: real, st: "ok", real };
-    return { v: f.valor, st: real ? "parc" : "prev", real };
-  }
   const ls = S.d.lancs.filter((l) => l.fixo === f.id && (l.fixoMes || l.data.slice(0, 7)) === ym);
   if (ls.length) return { v: somaV(ls), st: "ok" };
   if (S.d.pulados.includes(f.id + "|" + ym)) return { v: 0, st: "pulou" };
@@ -1583,11 +1556,10 @@ function relFixos(P, meses) {
       if (!va && !vb) continue;
       const a = va && va.st !== "pulou" ? va.v : (va ? 0 : null), b = vb && vb.st !== "pulou" ? vb.v : (vb ? 0 : null);
       const c = cat(f.cat), nome = f.nota || c.nome;
-      linhas.push(`<div class="lvs"><span class="bo-l">${bola(c.icone, c.cor)}</span><span class="n">${esc(nome)}${f.varia ? `<small class="lvs-v">varia</small>` : ""}</span>
-        <span class="a num">${a === null ? "—" : va.st === "pulou" ? "pulou" : fmt(a)}</span><b class="num ${vb && (vb.st === "prev" || vb.st === "parc") ? "cinza" : ""}">${b === null ? "—" : vb.st === "pulou" ? "pulou" : fmt(b)}</b>${chip(va && va.st === "pulou" ? 0 : a, vb && vb.st === "pulou" ? null : b, tipo)}</div>`);
+      linhas.push(`<div class="lvs"><span class="bo-l">${bola(c.icone, c.cor)}</span><span class="n">${esc(nome)}</span>
+        <span class="a num">${a === null ? "—" : va.st === "pulou" ? "pulou" : fmt(a)}</span><b class="num ${vb && vb.st === "prev" ? "cinza" : ""}">${b === null ? "—" : vb.st === "pulou" ? "pulou" : fmt(b)}</b>${chip(va && va.st === "pulou" ? 0 : a, vb && vb.st === "pulou" ? null : b, tipo)}</div>`);
       // frases do "o que mais mudou"
       const A = a || 0, B = b || 0, d = B - A;
-      if (f.varia && vb && vb.st !== "ok") continue; // mês ainda em andamento: não compara
       if (va && va.st === "pulou" && B) mudancas.push({ p: B, v: `<span class="cv neu">volta</span>`, t: `${esc(nome)} voltou depois de pular ${mesCurto(ant)}.` });
       else if (!va && B) mudancas.push({ p: B, v: `<span class="cv neu">novo</span>`, t: `${esc(nome)} começou em ${mesCurto(ref)}.` });
       else if (vb && vb.st === "pulou" && A) mudancas.push({ p: A, v: `<span class="cv neu">pulou</span>`, t: `${esc(nome)} foi pulado em ${mesCurto(ref)}.` });
@@ -1605,24 +1577,9 @@ function relFixos(P, meses) {
       <div class="lvs tot"><span></span><span class="n"><b>Total</b></span><span class="a num">${fmt(ta)}</span><b class="num">${fmt(tb)}</b>${chip(ta, tb, tipo)}</div></div>`;
   };
   corpo += lista("despesa") + lista("receita");
-  // recorrentes que variam: 3 meses antes, o mês escolhido e o seguinte
-  const vs = S.d.fixos.filter((f) => f.varia && [-3, -2, -1, 0, 1].some((i) => valorFixoMes(f, somaMes(ref, i))));
-  if (vs.length) {
-    const cel = (f, ym) => {
-      const x = valorFixoMes(f, ym);
-      if (!x) return `<div class="vm-c vazio"><small>${mesCurto(ym)}</small><b>—</b></div>`;
-      if (x.st === "pulou") return `<div class="vm-c"><small>${mesCurto(ym)}</small><b>0</b><em>pulou</em></div>`;
-      if (x.st === "ok") return `<div class="vm-c r"><small>${mesCurto(ym)}</small><b class="num">${fmt(x.v)}</b><em>real</em></div>`;
-      if (x.st === "parc") return `<div class="vm-c m"><small>${mesCurto(ym)}</small><b class="num">${fmt(x.v)}</b><em>já foi ${fmt(x.real)}</em></div>`;
-      return `<div class="vm-c p"><small>${mesCurto(ym)}</small><b class="num">${fmt(x.v)}</b><em>previsto</em></div>`;
-    };
-    corpo += `<div class="box"><h3>Recorrentes que variam</h3>${vs.map((f) => { const c = cat(f.cat); return `<div class="vm-l"><div class="vm-t">${bola(c.icone, c.cor)}<span><b>${esc(f.nota || c.nome)}</b><small>Sua previsão: ${fmtR(f.valor)} · ${f.varia === "varias" ? "várias vezes no mês" : `uma vez, dia ${f.dia}`}</small></span></div>
-      <div class="vm-g">${[-3, -2, -1, 0, 1].map((i) => cel(f, somaMes(ref, i))).join("")}</div></div>`; }).join("")}
-      <div class="vm-leg"><span><i class="r"></i>valor real</span><span><i class="p"></i>previsão</span></div></div>`;
-  }
   const top = mudancas.sort((a, b) => b.p - a.p).slice(0, 4);
   if (top.length) corpo += `<div class="box"><h3>O que mais mudou</h3>${top.map((x) => `<div class="mud">${x.v}<span>${x.t}</span></div>`).join("")}</div>`;
-  corpo += `<p class="rel-nota">Valores em <span class="cinza">cinza</span> ainda não foram confirmados (é o valor cadastrado do fixo).${S.d.fixos.some((f) => f.varia === "varias") ? " Nos recorrentes que variam, mês que já passou mostra só o valor real; o mês atual mostra o já lançado mais o que falta até a sua previsão." : ""}</p>`;
+  corpo += `<p class="rel-nota">Valores em <span class="cinza">cinza</span> ainda não foram confirmados (é o valor cadastrado do fixo).</p>`;
   return { k, corpo };
 }
 
@@ -1840,7 +1797,7 @@ function verConsiderado(tipo, qual, ym) {
     const passa = (l) => ok ? jaFoi(l) : !jaFoi(l) && (!des || vaiPraFaturaSeguinte(l, ym) === cart);
     const lancs = S.d.lancs.filter((l) => l.tipo === tipo && l.data.startsWith(ym) && passa(l))
       .sort((x, y) => (ok ? y.data.localeCompare(x.data) : x.data.localeCompare(y.data)) || x.id.localeCompare(y.id));
-    const fixos = ok ? [] : [...fixosPendentes(ym), ...variaPendentes(ym)].filter((f) => f.tipo === tipo && (!des || fixoNaFaturaSeguinte(f, ym) === cart));
+    const fixos = ok ? [] : fixosPendentes(ym).filter((f) => f.tipo === tipo && (!des || fixoNaFaturaSeguinte(f, ym) === cart));
     const invOk = !des && ok ? S.d.lancs.filter((l) => l.tipo === "resg" && l.prog && l.data.startsWith(ym)).sort((x, y) => y.data.localeCompare(x.data)) : [];
     const invFalta = !des && !ok ? progAReceber(ym) : [];
     const total = lancs.reduce((t, l) => t + l.valor, 0) + fixos.reduce((t, f) => t + f.valor, 0) + invOk.reduce((t, l) => t + l.valor, 0) + invFalta.reduce((t, x) => t + x.valor, 0);
@@ -1850,24 +1807,23 @@ function verConsiderado(tipo, qual, ym) {
       ? `Compras no cartão feitas em ${nomeMes(ym)} que só vencem numa <b>fatura dos próximos meses</b>. Elas contam nas despesas de ${nomeMes(ym)} (mês da compra), mas o dinheiro só sai quando você pagar aquela fatura.`
       : ok
       ? `Lançamentos de ${des ? "despesa" : "receita"} de ${nomeMes(ym)} com data <b>até hoje (${dataCurta(hj)})</b>.${des ? "" : " Inclui as parcelas de investimentos/empréstimos recebidas no mês."}${des ? " Compras no cartão só entram aqui depois que a fatura delas for paga." : ""}`
-      : `Lançamentos de ${des ? "despesa" : "receita"} de ${nomeMes(ym)} com data <b>depois de hoje (${dataCurta(hj)})</b>${des ? ", como parcelas futuras," : ""} e os <b>fixos ainda não confirmados</b> do mês${des ? " (nos recorrentes que variam, o que falta até a previsão)" : ""}.${des ? "" : " Inclui as <b>parcelas de investimentos/empréstimos</b> ainda não recebidas (e as atrasadas)."}${des ? " Inclui as <b>compras no cartão cuja fatura vence neste mês</b> e ainda não foi paga. As que vão para faturas seguintes ficam separadas, com o ícone do cartão." : ""}`;
+      : `Lançamentos de ${des ? "despesa" : "receita"} de ${nomeMes(ym)} com data <b>depois de hoje (${dataCurta(hj)})</b>${des ? ", como parcelas futuras," : ""} e os <b>fixos ainda não confirmados</b> do mês.${des ? "" : " Inclui as <b>parcelas de investimentos/empréstimos</b> ainda não recebidas (e as atrasadas)."}${des ? " Inclui as <b>compras no cartão cuja fatura vence neste mês</b> e ainda não foi paga. As que vão para faturas seguintes ficam separadas, com o ícone do cartão." : ""}`;
     const secao = (rot, v, html) => html ? `<div class="dia-cab"><span>${rot}</span><span class="num">${fmt(v)}</span></div>${html}` : "";
-    const htmlFixos = fixos.map((f) => { const c = cat(f.cat); return `<div class="item pendente"><button class="pend-abrir" ${f.ehVaria ? `data-varia="${f.id}"` : `data-fixo="${f.id}"`}>${bola(c.icone, c.cor)}
-        <span class="meio"><div>${esc(f.nota || c.nome)}</div><small>${f.ehVaria ? `${ic("repeat")}Varia · falta até a previsão de ${fmt(f.previsao)}` : `dia ${dataCurta(dataFixo(f, ym))} · ${ic("repeat")}Fixo a confirmar`}${f.cartao ? " · " + esc(cartao(f.cartao).nome) : ""}</small></span>
+    const htmlFixos = fixos.map((f) => { const c = cat(f.cat); return `<div class="item pendente"><button class="pend-abrir" data-fixo="${f.id}">${bola(c.icone, c.cor)}
+        <span class="meio"><div>${esc(f.nota || c.nome)}</div><small>dia ${dataCurta(dataFixo(f, ym))} · ${ic("repeat")}Fixo a confirmar${f.cartao ? " · " + esc(cartao(f.cartao).nome) : ""}</small></span>
         <span class="val num">${des ? "- " : "+ "}${fmt(f.valor)}</span></button></div>`; }).join("");
     $("[data-considc]", el).innerHTML = `<h2>${titulo}</h2>
       <p style="text-align:center;color:#777;margin:-6px 0 4px;font-size:14px">${nomeMes(ym)}</p>
       <div style="text-align:center;font-size:28px;font-weight:700" class="num">${fmtR(total)}</div>
       <p class="consid-regra">${regra}${des && !cart && noCartao.length ? `<br>Destas, <b>${fmtR(noCartao.reduce((t, l) => t + l.valor, 0))}</b> são compras no cartão${ok ? " (fatura já paga)" : " (fatura ainda não paga)"}.` : ""}</p>
       <div style="margin:0 -18px">${secao("Lançamentos", lancs.reduce((t, l) => t + l.valor, 0), lancs.map((l) => itemLanc(l, true)).join(""))}
-      ${secao("Fixos a confirmar e previsões", fixos.reduce((t, f) => t + f.valor, 0), htmlFixos)}
+      ${secao("Fixos a confirmar", fixos.reduce((t, f) => t + f.valor, 0), htmlFixos)}
       ${secao("Investimentos recebidos", invOk.reduce((t, l) => t + l.valor, 0), invOk.map((l) => itemLanc(l, true)).join(""))}
       ${secao("Investimentos a receber", invFalta.reduce((t, x) => t + x.valor, 0), invFalta.map((x) => `<div class="item pendente"><button class="pend-abrir" data-progok="${x.inv.id}|${x.p.id}|${x.ym}">${bola(x.inv.icone, corInv(x.inv))}
         <span class="meio"><div>${esc(x.inv.nome)}</div><small>${x.atrasada ? `<b style="color:#C62828">atrasada</b> · ` : ""}${x.sub}</small></span><span class="val num">+ ${fmt(x.valor)}</span></button></div>`).join(""))}
       ${!lancs.length && !fixos.length && !invOk.length && !invFalta.length ? `<p class="vazio" style="padding:20px">Nada aqui em ${nomeMes(ym)}.</p>` : ""}</div>`;
     el.querySelectorAll("[data-lanc]").forEach((b) => (b.onclick = () => abrirLanc(b.dataset.lanc)));
     el.querySelectorAll("[data-fixo]").forEach((b) => (b.onclick = () => abrirEditor(null, { fixo: fixoPorId(b.dataset.fixo), ym })));
-    el.querySelectorAll("[data-varia]").forEach((b) => (b.onclick = () => abrirEditor(null, { varia: fixoPorId(b.dataset.varia), ym })));
     el.querySelectorAll("[data-progok]").forEach((b) => (b.onclick = () => { const [iv, pl, pm] = b.dataset.progok.split("|"); confirmarProg(iv, pl, pm); }));
   };
   pintar();
@@ -1976,14 +1932,13 @@ async function sairConfirmar() { if (await confirmar("Sair", "Você vai precisar
 function abrirEditor(l, opc = {}) {
   const ultimo = (tipo) => { const x = [...S.d.lancs].reverse().find((y) => y.tipo === tipo && y.cat); return x ? x.cat : null; };
   const editando = !!l;
-  const fonte = l || opc.modelo || opc.fixo || opc.varia;
+  const fonte = l || opc.modelo || opc.fixo;
   const E = fonte
     ? { tipo: fonte.tipo, cat: fonte.cat, nota: fonte.nota || "", conta: fonte.conta || S.d.contas[0]?.id, cartao: fonte.cartao || null, fatMes: editando ? l.fatMes || null : null,
         destino: fonte.destino || S.d.contas[1]?.id, data: editando ? l.data : hoje(), expr: nf0.format(fonte.valor / 100).replace(/\./g, ""), parcelas: 1, repetir: 0 }
     : { tipo: "despesa", cat: null, expr: "", nota: "", data: hoje(), conta: S.d.contas[0]?.id, cartao: null, parcelas: 1, destino: S.d.contas[1]?.id, repetir: 0 };
   if (!fonte && S.mes !== mesAtual()) E.data = `${S.mes}-01`;
   if (opc.fixo) { const v = dataFixo(opc.fixo, opc.ym); E.data = v < hoje() ? v : hoje(); }
-  if (opc.varia) { E.expr = ""; if (opc.ym && opc.ym !== mesAtual()) E.data = `${opc.ym}-01`; }
   if (E.conta && !S.d.contas.some((c) => c.id === E.conta)) E.conta = S.d.contas[0]?.id;
   if (E.cartao && !S.d.cartoes.some((c) => c.id === E.cartao)) E.cartao = null;
   // investimentos
@@ -1993,7 +1948,7 @@ function abrirEditor(l, opc = {}) {
   if (opc.transf) { E.tipo = "transf"; E.data = hoje(); }
   let todasCats = false;
 
-  const titulo = editando ? "Editar" : opc.fixo ? (opc.fixo.varia ? "Valor deste mês" : "Confirmar fixo") : opc.varia ? "Lançar " + (opc.varia.nota || cat(opc.varia.cat).nome) : opc.modelo ? "Lançar de novo" : "Adicionar";
+  const titulo = editando ? "Editar" : opc.fixo ? "Confirmar fixo" : opc.modelo ? "Lançar de novo" : "Adicionar";
   const direita = editando
     ? `<button data-repetir aria-label="Lançar de novo">${ic("copy-plus")}</button><button data-del aria-label="Apagar">${ic("trash")}</button>`
     : opc.fixo ? `<button data-pular style="font-size:15px">Pular mês</button>` : "";
@@ -2184,7 +2139,7 @@ function abrirEditor(l, opc = {}) {
   const fixoLigado = () => (editando && l.fixo ? fixoPorId(l.fixo) : null);
   function pintarRepetir() {
     const fx = fixoLigado();
-    const pode = !opc.fixo && !opc.varia && E.tipo !== "transf" && E.tipo !== "invest" && E.parcelas === 1 && !(editando && l.parc);
+    const pode = !opc.fixo && E.tipo !== "transf" && E.tipo !== "invest" && E.parcelas === 1 && !(editando && l.parc);
     btRep.hidden = !pode && !fx;
     btRep.classList.toggle("ativo", !!E.repetir || !!fx);
     btRep.innerHTML = `${ic("repeat")}<span>${fx ? "Recorrente" : txtRep(E.repetir)}</span>`;
@@ -3175,22 +3130,8 @@ function dataFixo(f, ym) {
 // Fixos que ainda não foram confirmados (nem pulados) no mês
 function fixosPendentes(ym) {
   return S.d.fixos
-    .filter((f) => f.varia !== "varias" && f.inicio <= ym && (!f.fim || ym < f.fim) && !S.d.pulados.includes(f.id + "|" + ym) && !S.d.lancs.some((l) => l.fixo === f.id && (l.fixoMes || l.data.slice(0, 7)) === ym))
+    .filter((f) => f.inicio <= ym && (!f.fim || ym < f.fim) && !S.d.pulados.includes(f.id + "|" + ym) && !S.d.lancs.some((l) => l.fixo === f.id && (l.fixoMes || l.data.slice(0, 7)) === ym))
     .sort((a, b) => a.dia - b.dia);
-}
-// Recorrentes que variam (f.varia): "uma" = uma vez por mês, valor muda (confirma com o valor real);
-// "varias" = várias vezes no mês, sem dia. Contam os lançamentos da categoria do recorrente (ou ligados a ele).
-const fixoAtivo = (f, ym) => f.inicio <= ym && (!f.fim || ym < f.fim);
-const lancsVaria = (f, ym) => S.d.lancs.filter((l) => l.tipo === f.tipo && l.data.startsWith(ym) && (l.fixo === f.id || (!l.fixo && l.cat === f.cat)));
-// O que ainda falta até a previsão (só no mês atual e nos próximos). Vira um "fixo pendente" com valor = falta.
-function variaPendentes(ym) {
-  const am = mesAtual();
-  if (ym < am) return [];
-  const d = ym === am ? hoje() : ym + "-01";
-  return S.d.fixos.filter((f) => f.varia === "varias" && fixoAtivo(f, ym)).map((f) => {
-    const real = somaV(lancsVaria(f, ym));
-    return { ...f, dia: Number(d.slice(8)), valor: Math.max(0, f.valor - real), real, previsao: f.valor, ehVaria: true };
-  }).filter((x) => x.valor > 0);
 }
 // Confirmar = já paguei/recebi. Pergunta a data, porque normalmente é antes ou depois do vencimento.
 function confirmarFixoRapido(fid, ym) {
@@ -3227,39 +3168,13 @@ function gerirFixos() {
       <p style="text-align:center;color:#666;margin:-6px 0 10px;font-size:14px">Aparecem todo mês no Início para você confirmar com um toque. Crie aqui ou toque em <b>↻ Recorrente</b> ao adicionar ou editar um lançamento.</p>
       <button class="btn preto" data-novofixo style="margin-bottom:10px">${ic("plus")}Novo recorrente</button>
       <div class="lista-escolha">${S.d.fixos.length ? S.d.fixos.map((f) => `<button data-e="${f.id}">${bola(cat(f.cat).icone, cat(f.cat).cor)}
-        <span>${esc(f.nota || cat(f.cat).nome)}<br><small style="color:#777">${f.tipo === "receita" ? "Receita" : "Despesa"} · ${f.varia === "varias" ? "várias vezes no mês" : `todo dia ${f.dia}`}${f.fim ? ` até ${nomeMes(somaMes(f.fim, -1))}` : ""} · ${f.varia ? `varia · previsão ${fmtR(f.valor)}` : fmtR(f.valor)}${f.cartao ? " · " + esc(cartao(f.cartao).nome) : ""}</small></span><span class="ok">${ic("pencil")}</span></button>`).join("")
+        <span>${esc(f.nota || cat(f.cat).nome)}<br><small style="color:#777">${f.tipo === "receita" ? "Receita" : "Despesa"} · todo dia ${f.dia}${f.fim ? ` até ${nomeMes(somaMes(f.fim, -1))}` : ""} · ${fmtR(f.valor)}${f.cartao ? " · " + esc(cartao(f.cartao).nome) : ""}</small></span><span class="ok">${ic("pencil")}</span></button>`).join("")
         : `<p class="vazio" style="padding:24px">Nenhum lançamento fixo ainda.</p>`}</div>`;
     el.querySelectorAll("[data-e]").forEach((b) => (b.onclick = () => editarFixo(fixoPorId(b.dataset.e), pintar)));
     $("[data-novofixo]", el).onclick = () => novoFixo(pintar);
   };
   pintar();
 }
-
-// Escolha "valor sempre o mesmo / muda todo mês" e "uma vez / várias vezes" (novo e editar recorrente)
-const htmlModoFixo = (f = {}) => `<div class="fx-modo"><small>O valor</small><div class="alternar"><button type="button" data-vm="" class="${f.varia ? "" : "ativo"}">É sempre o mesmo</button><button type="button" data-vm="1" class="${f.varia ? "ativo" : ""}">Muda todo mês</button></div>
-  <div data-vezes ${f.varia ? "" : "hidden"}><small>Quantas vezes no mês</small><div class="alternar"><button type="button" data-vz="uma" class="${f.varia !== "varias" ? "ativo" : ""}">Uma vez</button><button type="button" data-vz="varias" class="${f.varia === "varias" ? "ativo" : ""}">Várias vezes</button></div></div></div>`;
-function ligarModoFixo(el, f = {}, aoMudar) {
-  const m = { varia: f.varia ? "1" : "", vezes: f.varia === "varias" ? "varias" : "uma" };
-  const pintar = () => {
-    el.querySelectorAll("[data-vm]").forEach((b) => b.classList.toggle("ativo", b.dataset.vm === m.varia));
-    el.querySelectorAll("[data-vz]").forEach((b) => b.classList.toggle("ativo", b.dataset.vz === m.vezes));
-    $("[data-vezes]", el).hidden = !m.varia;
-    const varias = m.varia && m.vezes === "varias";
-    $("[data-rotvalor]", el).firstChild.textContent = m.varia ? "Previsão por mês (R$)" : "Valor (R$)";
-    $("[data-rotdia]", el).hidden = !!varias;
-    $("[data-rotdia]", el).parentElement.classList.toggle("dois", !varias);
-    $("[data-dicafx]", el).innerHTML = varias
-      ? "Sem dia fixo: lance cada vez com o valor e a data reais. <b>Tudo o que for lançado na categoria escolhida conta nele.</b> A previsão é sua: no mês que já passou vale só o real."
-      : m.varia ? "Aparece no dia para você confirmar. Na hora, o valor vem com a previsão e você digita o valor real."
-      : "Todo mês ele aparece no Início no dia escolhido. Só entra no saldo quando você confirma.";
-    aoMudar && aoMudar(m);
-  };
-  el.querySelectorAll("[data-vm]").forEach((b) => (b.onclick = () => { m.varia = b.dataset.vm; pintar(); }));
-  el.querySelectorAll("[data-vz]").forEach((b) => (b.onclick = () => { m.vezes = b.dataset.vz; pintar(); }));
-  pintar();
-  return () => (m.varia ? m.vezes : null);
-}
-const variaRepetida = (tipo, catId, semId) => S.d.fixos.find((x) => x.varia === "varias" && x.tipo === tipo && x.cat === catId && x.id !== semId && (!x.fim || x.fim > mesAtual()));
 
 // Criar um recorrente direto pela lista (sem lançar nada agora)
 function novoFixo(depois) {
@@ -3268,21 +3183,19 @@ function novoFixo(depois) {
   const dias = Array.from({ length: 31 }, (_, i) => `<option ${i + 1 === diaHoje ? "selected" : ""}>${i + 1}</option>`).join("");
   const el = abrirCamada(`<h2>Novo recorrente</h2><form data-f>
     <div class="alternar" style="margin:0 auto 14px"><button type="button" data-tp="despesa" class="ativo">Despesa</button><button type="button" data-tp="receita">Receita</button></div>
-    <label>Nota<input name="nota" maxlength="80" placeholder="Ex.: Aluguel, Internet, Mercado" required></label>
-    ${htmlModoFixo()}
-    <div class="dois"><label data-rotvalor>Valor (R$)<input name="valor" inputmode="decimal" placeholder="0,00" required></label>
-    <label data-rotdia>Todo dia<select name="dia">${dias}</select></label></div>
+    <label>Nota<input name="nota" maxlength="80" placeholder="Ex.: Aluguel, Internet, Salário" required></label>
+    <div class="dois"><label>Valor (R$)<input name="valor" inputmode="decimal" placeholder="0,00" required></label>
+    <label>Todo dia<select name="dia">${dias}</select></label></div>
     <label>Categoria<select name="cat" data-cats></select></label>
     <label>${"Pago com"}<select name="onde" data-onde></select></label>
     <div class="dois"><label>Começa em<select name="inicio">
       <option value="${ym}">Este mês</option><option value="${somaMes(ym, 1)}">Próximo mês</option></select></label>
     <label>Por quanto tempo<select name="prazo"><option value="0">Sem prazo</option>
       ${[2, 3, 4, 5, 6, 10, 12, 18, 24, 36, 48, 60].map((n) => `<option value="${n}">${n} meses</option>`).join("")}</select></label></div>
-    <p style="font-size:13px;color:#777;margin:-4px 0 12px" data-dicafx></p>
+    <p style="font-size:13px;color:#777;margin:-4px 0 12px">Todo mês ele aparece no Início em “Fixos a confirmar”. Só entra no saldo quando você confirma.</p>
     <p class="erro" data-e></p>
     <div class="botoes"><button class="btn preto">Criar recorrente</button></div></form>`);
   const f = $("[data-f]", el);
-  const modo = ligarModoFixo(el);
   const pintarOpcoes = () => {
     $("[data-cats]", el).innerHTML = S.d.categorias.filter((c) => c.tipo === tipo).map((c) => `<option value="${c.id}">${esc(c.nome)}</option>`).join("");
     const contas = S.d.contas.map((c) => `<option value="conta:${c.id}">${esc(c.nome)}</option>`).join("");
@@ -3302,15 +3215,12 @@ function novoFixo(depois) {
     if (!(v > 0)) return ($("[data-e]", el).textContent = "Digite um valor válido.");
     if (!f.cat.value) return ($("[data-e]", el).textContent = "Escolha uma categoria.");
     const [k, id] = f.onde.value.split(":");
-    const vr = modo(), rep = vr === "varias" && variaRepetida(tipo, f.cat.value);
-    if (rep) return ($("[data-e]", el).textContent = `Já existe um recorrente que varia na categoria ${cat(f.cat.value).nome} (${rep.nota || cat(rep.cat).nome}). Escolha outra categoria.`);
     const novo = { id: novoId(), tipo, cat: f.cat.value, valor: v, nota: f.nota.value.trim(), conta: k === "conta" ? id : null, cartao: k === "cartao" ? id : null, dia: Number(f.dia.value), inicio: f.inicio.value };
-    if (vr) novo.varia = vr;
     const n = Number(f.prazo.value);
     if (n > 0) novo.fim = somaMes(novo.inicio, n);
     S.d.fixos.push(novo);
     await salvar(); fechar();
-    aviso(vr === "varias" ? `Recorrente criado: tudo o que você lançar em ${cat(novo.cat).nome} conta nele. Previsão de ${fmtR(v)} por mês.` : `Recorrente criado: aparece todo dia ${novo.dia}${novo.fim ? `, até ${nomeMes(somaMes(novo.fim, -1))}` : ""}.`);
+    aviso(`Recorrente criado: aparece todo dia ${novo.dia}${novo.fim ? `, até ${nomeMes(somaMes(novo.fim, -1))}` : ""}.`);
     setTimeout(() => { depois && depois(); atualizarFundo(); }, 0);
   };
 }
@@ -3318,26 +3228,20 @@ function novoFixo(depois) {
 function editarFixo(f, depois) {
   const dias = Array.from({ length: 31 }, (_, i) => `<option ${i + 1 === f.dia ? "selected" : ""}>${i + 1}</option>`).join("");
   const cats = S.d.categorias.filter((c) => c.tipo === f.tipo);
-  const el = abrirCamada(`<h2>Editar recorrente</h2><form data-f>
+  const el = abrirCamada(`<h2>Editar fixo</h2><form data-f>
     <label>Nota<input name="nota" maxlength="80" value="${esc(f.nota || "")}" placeholder="Ex.: Aluguel"></label>
-    ${htmlModoFixo(f)}
-    <div class="dois"><label data-rotvalor>Valor (R$)<input name="valor" inputmode="decimal" value="${nf2.format(f.valor / 100)}" required></label>
-    <label data-rotdia>Todo dia<select name="dia">${dias}</select></label></div>
+    <div class="dois"><label>Valor (R$)<input name="valor" inputmode="decimal" value="${nf2.format(f.valor / 100)}" required></label>
+    <label>Todo dia<select name="dia">${dias}</select></label></div>
     <label>Categoria<select name="cat">${cats.map((c) => `<option value="${c.id}" ${c.id === f.cat ? "selected" : ""}>${esc(c.nome)}</option>`).join("")}</select></label>
-    <p style="font-size:13px;color:#777;margin:-4px 0 6px" data-dicafx></p>
-    <p style="font-size:13px;color:#777;margin:0 0 12px">As mudanças valem para os próximos meses. O que já foi confirmado não muda.</p>
+    <p style="font-size:13px;color:#777;margin:-4px 0 12px">As mudanças valem para os próximos meses. O que já foi confirmado não muda.</p>
     <p class="erro" data-e></p>
     <div class="botoes"><button class="btn preto">Salvar</button><button type="button" class="btn perigo" data-parar>Parar de repetir</button></div></form>`);
-  const modo = ligarModoFixo(el, f);
   $("[data-f]", el).onsubmit = async (e) => {
     e.preventDefault();
     const fm = e.target, v = lerValor(fm.valor.value);
     if (!(v > 0)) return ($("[data-e]", el).textContent = "Digite um valor válido.");
-    const vr = modo(), rep = vr === "varias" && variaRepetida(f.tipo, fm.cat.value, f.id);
-    if (rep) return ($("[data-e]", el).textContent = `Já existe um recorrente que varia na categoria ${cat(fm.cat.value).nome} (${rep.nota || cat(rep.cat).nome}). Escolha outra categoria.`);
     Object.assign(f, { nota: fm.nota.value.trim(), valor: v, dia: Number(fm.dia.value), cat: fm.cat.value });
-    if (vr) f.varia = vr; else delete f.varia;
-    await salvar(); fechar(); aviso("Recorrente atualizado."); setTimeout(depois, 0);
+    await salvar(); fechar(); aviso("Fixo atualizado."); setTimeout(depois, 0);
   };
   $("[data-parar]", el).onclick = async () => {
     if (!(await confirmar("Parar de repetir", "Ele deixa de aparecer nos próximos meses. Os lançamentos já confirmados continuam.", "Parar", true))) return;
