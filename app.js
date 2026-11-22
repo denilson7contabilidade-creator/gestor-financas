@@ -1,7 +1,7 @@
 "use strict";
 /* Gestor de Finanças — app instalável, dados guardados só no aparelho e criptografados. */
 
-const VERSAO_APP = "3.24";
+const VERSAO_APP = "3.25";
 const $ = (s, el = document) => el.querySelector(s);
 const esc = (t) => String(t ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const ic = (n) => `<svg class="ic" viewBox="0 0 24 24">${ICONES[n] || ICONES["circle-ellipsis"]}</svg>`;
@@ -1521,7 +1521,11 @@ function valorFixoMes(f, ym) {
   if (f.inicio <= ym && (!f.fim || ym < f.fim)) return { v: f.valor, st: "prev" };
   return null;
 }
-const totFixos = (ym, tipo) => S.d.fixos.filter((f) => f.tipo === tipo).reduce((t, f) => { const x = valorFixoMes(f, ym); return t + (x ? x.v : 0); }, 0);
+// Créditos dos cartões de benefício (VA, VR…) contam como receita fixa, como o salário,
+// mesmo quando foram lançados como receita comum ou parcelada (não como recorrente)
+const creditoBenef = (contaId, ym) => S.d.lancs.filter((l) => l.tipo === "receita" && !l.fixo && l.conta === contaId && l.data.startsWith(ym)).reduce((t, l) => t + l.valor, 0);
+const totFixos = (ym, tipo) => S.d.fixos.filter((f) => f.tipo === tipo).reduce((t, f) => { const x = valorFixoMes(f, ym); return t + (x ? x.v : 0); }, 0)
+  + (tipo === "receita" ? S.d.contas.filter(ehBenef).reduce((t, c) => t + creditoBenef(c.id, ym), 0) : 0);
 function relFixos(P, meses) {
   if (!S.d.fixos.length) return { k: "", corpo: `<p class="vazio">${ic("repeat")}Nenhum lançamento fixo cadastrado.<br>Cadastre em Perfil → Lançamentos recorrentes.</p>` };
   const am = mesAtual(), ref = meses.includes(am) ? am : meses[meses.length - 1], ant = somaMes(ref, -1);
@@ -1569,8 +1573,16 @@ function relFixos(P, meses) {
         mudancas.push({ p: Math.abs(d), v: `<span class="cv ${bom ? "dn" : "up"}">${d > 0 ? "+" : "−"} ${fmt(Math.abs(d))}</span>`, t: `${esc(nome)} ${t}.` });
       }
     }
+    if (tipo === "receita") for (const c of S.d.contas.filter(ehBenef)) {
+      const a = creditoBenef(c.id, ant), b = creditoBenef(c.id, ref);
+      if (!a && !b) continue;
+      linhas.push(`<div class="lvs"><span class="bo-l">${bola("ticket")}</span><span class="n">${esc(c.nome)}</span><span class="a num">${a ? fmt(a) : "—"}</span><b class="num">${b ? fmt(b) : "—"}</b>${chip(a || null, b, "receita")}</div>`);
+      const d = b - a;
+      if (!a && b) mudancas.push({ p: b, v: `<span class="cv neu">novo</span>`, t: `Crédito do ${esc(c.nome)} entrou em ${mesCurto(ref)}.` });
+      else if (a && Math.abs(d) >= 1) mudancas.push({ p: Math.abs(d), v: `<span class="cv ${d > 0 ? "dn" : "up"}">${d > 0 ? "+" : "−"} ${fmt(Math.abs(d))}</span>`, t: `Crédito do ${esc(c.nome)} ${d > 0 ? "aumentou" : "diminuiu"}.` });
+    }
     if (!linhas.length) return "";
-    const ta = S.d.fixos.filter((x) => x.tipo === tipo).reduce((t, f) => { const v = valorFixoMes(f, ant); return t + (v ? v.v : 0); }, 0);
+    const ta = totFixos(ant, tipo);
     const tb = totFixos(ref, tipo);
     return `<div class="box sem-pad"><h3 class="h3pad">${tipo === "despesa" ? "Despesas fixas" : "Receitas fixas"}: ${MESES[Number(ant.slice(5)) - 1]} → ${MESES[Number(ref.slice(5)) - 1]}</h3>
       <div class="cab-vs"><span></span><span></span><span>${mesCurto(ant)}</span><span>${mesCurto(ref)}</span><span></span></div>${linhas.join("")}
@@ -1579,7 +1591,7 @@ function relFixos(P, meses) {
   corpo += lista("despesa") + lista("receita");
   const top = mudancas.sort((a, b) => b.p - a.p).slice(0, 4);
   if (top.length) corpo += `<div class="box"><h3>O que mais mudou</h3>${top.map((x) => `<div class="mud">${x.v}<span>${x.t}</span></div>`).join("")}</div>`;
-  corpo += `<p class="rel-nota">Valores em <span class="cinza">cinza</span> ainda não foram confirmados (é o valor cadastrado do fixo).</p>`;
+  corpo += `<p class="rel-nota">Valores em <span class="cinza">cinza</span> ainda não foram confirmados (é o valor cadastrado do fixo).${S.d.contas.some(ehBenef) ? " Os créditos dos cartões de benefício (VA, VR…) entram como receita fixa." : ""}</p>`;
   return { k, corpo };
 }
 
