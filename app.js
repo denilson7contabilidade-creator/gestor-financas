@@ -1,7 +1,7 @@
 "use strict";
 /* Gestor de Finanças — app instalável, dados guardados só no aparelho e criptografados. */
 
-const VERSAO_APP = "3.23";
+const VERSAO_APP = "3.24";
 const $ = (s, el = document) => el.querySelector(s);
 const esc = (t) => String(t ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const ic = (n) => `<svg class="ic" viewBox="0 0 24 24">${ICONES[n] || ICONES["circle-ellipsis"]}</svg>`;
@@ -611,8 +611,19 @@ function telaCodigo(codigo, novaConta) {
 
 /* ================= TELAS PRINCIPAIS ================= */
 
+// Cartões (e benefícios) mais usados primeiro: soma das compras dos últimos 3 meses; empate = o mais novo
+function ordenarPorUso() {
+  const de = `${somaMes(mesAtual(), -2)}-01`, uso = {};
+  for (const l of S.d.lancs) if (l.tipo === "despesa" && l.data >= de) { const k = l.cartao || l.conta; if (k) uso[k] = (uso[k] || 0) + l.valor; }
+  const ord = (arr) => arr.map((x, i) => ({ x, i })).sort((a, b) => (uso[b.x.id] || 0) - (uso[a.x.id] || 0) || b.i - a.i).map((o) => o.x);
+  S.d.cartoes = ord(S.d.cartoes);
+  // contas comuns ficam na ordem; entre os benefícios, o mais usado primeiro
+  const ben = ord(S.d.contas.filter(ehBenef)); let k = 0;
+  S.d.contas = S.d.contas.map((c) => (ehBenef(c) ? ben[k++] : c));
+}
 function desenhar() {
   if (!S.u) return telaLogin();
+  ordenarPorUso();
   agendarAvisosBackup();
   const telas = { inicio: telaInicio, graficos: telaGraficos, relatorios: telaRelatorios, perfil: telaPerfil };
   $("#app").innerHTML = telas[S.aba]() + nav();
@@ -1442,7 +1453,7 @@ function relCartoes(P, det) {
     ${kpi("Pago", fmt(pago), falta ? `falta ${fmt(falta)}` : total ? "✓ quitada" : "", falta ? "amarelo" : "verde")}${kpi("Compras", String(itens.length), parcs ? `${parcs} parcelada(s)` : "na fatura")}</div>`;
   let corpo = "";
   if (cs.length > 1) {
-    const porC = cs.map((c) => { const fs = fats.filter((x) => x.c === c); return { c, t: fs.reduce((s, x) => s + x.f.total, 0), fl: fs.reduce((s, x) => s + x.f.falta, 0), n: fs.reduce((s, x) => s + x.f.itens.length, 0) }; });
+    const porC = cs.map((c) => { const fs = fats.filter((x) => x.c === c); return { c, t: fs.reduce((s, x) => s + x.f.total, 0), fl: fs.reduce((s, x) => s + x.f.falta, 0), n: fs.reduce((s, x) => s + x.f.itens.length, 0) }; }).sort((a, b) => b.t - a.t);
     corpo += `<div class="box sem-pad"><h3 class="h3pad">Faturas ${P.mes ? `que vencem em ${nomeMes(P.mes)}` : "do período"}</h3>${porC.map((x) => `<button class="linha-opc" data-det="${x.c.id}"><span class="bola">${ic("credit-card")}</span>
       <span class="meio">${esc(x.c.nome)}<small>${P.mes ? `vence ${dataCurta(vencimentoData(x.c.id, P.mes))} · ` : ""}${x.n} compra(s)</small></span>
       <span class="fat-dir"><b class="num">${fmtR(x.t)}</b>${!x.t ? `<span class="etiqueta">Sem compras</span>` : x.fl ? `<span class="etiqueta">Falta ${fmt(x.fl)}</span>` : `<span class="etiqueta paga">Paga</span>`}</span></button>`).join("")}</div>`;
@@ -1747,7 +1758,7 @@ function abrirFaturasMes(mesIni) {
   let ym = mesIni;
   const el = abrirCamada(`<div data-fatmesc></div>`, { aoFechar: () => desenhar() });
   const pintar = () => {
-    const fs = S.d.cartoes.map((c) => ({ c, f: infoFatura(c.id, ym) }));
+    const fs = S.d.cartoes.map((c) => ({ c, f: infoFatura(c.id, ym) })).sort((a, b) => b.f.total - a.f.total);
     const total = fs.reduce((t, x) => t + x.f.total, 0), falta = fs.reduce((t, x) => t + x.f.falta, 0);
     const pago = fs.reduce((t, x) => t + Math.min(x.f.pago, x.f.total), 0);
     const aberta = (cid) => faturaAberta(cid) === ym;
@@ -3441,7 +3452,8 @@ function editarConta(c, depois, opc = {}) {
   const ap = $("[data-apagar]", el);
   if (ap) ap.onclick = async () => {
     if (S.d.contas.length === 1) return aviso("É preciso ter pelo menos uma conta.");
-    if (S.d.lancs.some((l) => l.conta === c.id || l.destino === c.id)) return aviso("Essa conta tem lançamentos. Apague ou mude os lançamentos antes.");
+    const n = S.d.lancs.filter((l) => l.conta === c.id || l.destino === c.id).length + S.d.fixos.filter((f) => f.conta === c.id).length;
+    if (n) return moverEApagar("conta", c, n, depois);
     if (!(await confirmar("Apagar conta", `Apagar “${c.nome}”?`, "Apagar", true))) return;
     S.d.contas = S.d.contas.filter((x) => x.id !== c.id);
     await salvar(); fechar(); aviso("Conta apagada."); setTimeout(depois, 0);
@@ -3497,11 +3509,41 @@ function editarCartao(c, depois) {
   };
   const ap = $("[data-apagar]", el);
   if (ap) ap.onclick = async () => {
-    if (S.d.lancs.some((l) => l.cartao === c.id)) return aviso("Esse cartão tem lançamentos. Apague-os antes.");
+    const n = S.d.lancs.filter((l) => l.cartao === c.id).length + S.d.fixos.filter((f) => f.cartao === c.id).length;
+    if (n) return moverEApagar("cartao", c, n, depois);
     if (!(await confirmar("Apagar cartão", `Apagar “${c.nome}”?`, "Apagar", true))) return;
     S.d.cartoes = S.d.cartoes.filter((x) => x.id !== c.id);
     await salvar(); fechar(); aviso("Cartão apagado."); setTimeout(() => depois ? depois() : desenhar(), 0);
   };
+}
+
+// Apagar uma conta/benefício/cartão que tem lançamentos: leva tudo para outro e apaga
+function moverEApagar(tipo, c, n, depois) {
+  const conta_ = tipo === "conta", outros = conta_ ? S.d.contas.filter((x) => x.id !== c.id) : S.d.cartoes.filter((x) => x.id !== c.id);
+  const nomeT = conta_ ? (ehBenef(c) ? "cartão de benefício" : "conta") : "cartão";
+  const el = abrirCamada(`<h2>Apagar “${esc(c.nome)}”</h2>
+    <p style="text-align:center;color:#555;margin:-6px 0 12px;font-size:14.5px">Esse ${nomeT} tem <b>${n} lançamento(s)</b>${conta_ ? " (e recorrentes)" : " (compras, pagamentos de fatura e recorrentes)"}.
+      Escolha para onde levar tudo. Nada é apagado: só muda de ${conta_ ? "conta" : "cartão"}.</p>
+    ${outros.length ? `<div class="lista-escolha">${outros.map((x) => `<button data-para="${x.id}"><span class="bola">${ic(conta_ ? icConta(x) : "credit-card")}</span><span>${esc(x.nome)}<br><small style="color:#777">${conta_ ? (ehBenef(x) ? "Benefício · " : "") + "Saldo: " + fmtR(saldoConta(x.id)) : `Fecha dia ${x.fechamento} · vence dia ${x.vencimento}`}</small></span><span class="ok">${ic("chevron-right")}</span></button>`).join("")}</div>`
+      : `<p class="vazio">Cadastre primeiro ${conta_ ? "a outra conta" : "o outro cartão"} para onde os lançamentos vão.</p>`}`);
+  el.querySelectorAll("[data-para]").forEach((b) => (b.onclick = async () => {
+    const d = outros.find((x) => x.id === b.dataset.para);
+    if (!(await confirmar("Mover e apagar", `Os lançamentos de “${c.nome}” vão para “${d.nome}”${conta_ && (c.saldoInicial || 0) ? ", junto com o saldo inicial" : ""}, e “${c.nome}” é apagado.${!conta_ ? " As compras passam a seguir o fechamento e o vencimento do novo cartão." : ""}`, "Mover e apagar", true))) return;
+    if (conta_) {
+      for (const l of S.d.lancs) { if (l.conta === c.id) l.conta = d.id; if (l.destino === c.id) l.destino = d.id; }
+      S.d.lancs = S.d.lancs.filter((l) => !(l.tipo === "transf" && l.conta === l.destino)); // transferência entre as duas vira nada
+      for (const f of S.d.fixos) if (f.conta === c.id) f.conta = d.id;
+      for (const i of S.d.invest) for (const p of i.progs || []) if (p.conta === c.id) p.conta = d.id;
+      d.saldoInicial = (d.saldoInicial || 0) + (c.saldoInicial || 0);
+      S.d.contas = S.d.contas.filter((x) => x.id !== c.id);
+    } else {
+      for (const l of S.d.lancs) if (l.cartao === c.id) l.cartao = d.id;
+      for (const f of S.d.fixos) if (f.cartao === c.id) f.cartao = d.id;
+      S.d.cartoes = S.d.cartoes.filter((x) => x.id !== c.id);
+    }
+    await salvar(); fecharTudo(); desenhar(); aviso(`Pronto: tudo foi para “${d.nome}” e “${c.nome}” foi apagado.`);
+    setTimeout(() => depois && depois(), 0);
+  }));
 }
 
 // Um cartão cadastrado como crédito que na verdade é VA/VR: vira cartão de benefício.
