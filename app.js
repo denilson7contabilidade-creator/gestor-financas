@@ -1,7 +1,7 @@
 "use strict";
 /* Gestor de Finanças — app instalável, dados guardados só no aparelho e criptografados. */
 
-const VERSAO_APP = "3.29";
+const VERSAO_APP = "3.30";
 const $ = (s, el = document) => el.querySelector(s);
 const esc = (t) => String(t ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const ic = (n) => `<svg class="ic" viewBox="0 0 24 24">${ICONES[n] || ICONES["circle-ellipsis"]}</svg>`;
@@ -1262,24 +1262,142 @@ ${benefs.length ? `- Benefícios (VA/VR): ${R(benefs.reduce((t, c) => t + saldoC
   return L.join("\n");
 }
 
+// Texto para a IA só com o que foi escolhido (Período · Analisar · Filtrar por), com o pedido certo para cada assunto
+const PEDIDO_IA = {
+  resumo: "1. Um diagnóstico simples do período: quanto entrou, saiu e sobrou.\n2. O peso dos fixos e quanto fica livre.\n3. Onde dá para gastar menos, com valores.\n4. Se faltar informação, me pergunte antes de concluir.",
+  gastos: "1. Onde estou gastando mais e o que está fora do normal.\n2. O que dá para cortar ou reduzir, com valores.\n3. Padrões (dias, lugares, formas de pagamento).\n4. Se faltar informação, me pergunte antes de concluir.",
+  receitas: "1. De onde vem meu dinheiro e quanto depende de cada fonte.\n2. Variações entre os meses e o que ainda falta receber.\n3. Riscos (renda concentrada, atrasos) e ideias para aumentar a renda.",
+  fixos: "1. Avalie minhas receitas e despesas fixas e quanto fica livre por mês.\n2. Quais fixos pesam mais e quais dá para renegociar ou cortar.\n3. Se o livre é suficiente e quanto eu deveria guardar.",
+  es: "1. Confira o saldo: saldo inicial + entradas − saídas tem que dar o saldo final. Aponte qualquer diferença.\n2. Se eu enviar o extrato do banco junto, compare linha a linha e mostre o que está diferente (falta, sobra, valor ou data errada).\n3. Para onde o dinheiro está indo.",
+  cartoes: "1. Confira cada fatura: a soma das compras tem que dar o total da fatura. Aponte qualquer diferença.\n2. Se eu enviar a fatura do banco junto, compare compra por compra e mostre o que está diferente (compra faltando, sobrando, valor, data, parcela ou fatura errada).\n3. Quanto do meu limite está comprometido com parcelas futuras.",
+  inv: "1. Avalie meus investimentos e empréstimos: rendimento, riscos e o que está para receber.\n2. Se alguma parcela está atrasada ou se algo não fecha, aponte.\n3. Sugestões para melhorar o rendimento.",
+};
+function gerarTextoIAFiltro({ per, rel, det, esconder }) {
+  const P = infoPer(per), hj = hoje(), R = (v) => nf2.format((v || 0) / 100), L = [];
+  const desc = (l) => (esconder ? "" : (l.nota || "").replace(/[\n;]/g, " ").trim());
+  const nomeFx = (f) => (esconder ? cat(f.cat).nome : f.nota || cat(f.cat).nome);
+  const nInv = {}; S.d.invest.forEach((i, k) => (nInv[i.id] = esconder ? `${i.tipo || "Investimento"} ${k + 1}` : i.nome));
+  const conta = (id) => (S.d.contas.find((c) => c.id === id) || {}).nome || "conta";
+  const forma = (l) => (temCartao(l.cartao) ? `cartão ${cartao(l.cartao).nome}` : l.conta ? conta(l.conta) : "");
+  const linhaL = (l) => `${l.data}; ${cat(l.cat).nome}; ${R(l.valor)}; ${forma(l)}${l.parc ? `; parcela ${l.parc.n}/${l.parc.t}` : ""}${l.fixo ? "; fixo" : ""}${esconder ? "" : `; ${desc(l)}`}`;
+  const filtro = rotuloDetalhe(rel, det);
+  L.push(`Você é um consultor financeiro pessoal. Abaixo está UM RECORTE dos dados do meu app de finanças (Gestor de Finanças), gerado em ${dataCurta(hj)}/${hj.slice(0, 4)}.
+Analise SOMENTE estes dados.
+- Assunto: ${relInfo(rel)[1]}
+- Período: ${P.rot} (${dataCurta(P.de)}/${P.de.slice(0, 4)} a ${dataCurta(P.ate)}/${P.ate.slice(0, 4)})
+- Filtro: ${filtro}
+
+COMO LER
+- Valores em reais (R$), formato brasileiro (1.234,56). Datas em ano-mês-dia.
+- Despesas contam no dia da compra. Compra no cartão entra na fatura do mês em que vence; pagar a fatura não é uma despesa nova.
+- "Fixo" = recorrente (salário, aluguel…). Valor "previsto" ou "média" ainda não foi confirmado; "real" já aconteceu.
+${esconder ? "- Nomes e descrições foram escondidos de propósito.\n" : ""}
+O QUE EU QUERO
+${PEDIDO_IA[rel]}
+`);
+  const lista = (tit, ls) => `${tit} — data; categoria; valor; conta/cartão${esconder ? "" : "; descrição"}\n${ls.length ? [...ls].sort((a, b) => a.data.localeCompare(b.data)).map(linhaL).join("\n") : "(nenhum)"}\n`;
+  if (rel === "cartoes") {
+    const cs = det ? S.d.cartoes.filter((c) => c.id === det) : S.d.cartoes;
+    for (const c of cs) {
+      L.push(`CARTÃO ${c.nome} — fecha dia ${c.fechamento}, vence dia ${c.vencimento}`);
+      for (const ym of P.meses) {
+        const f = infoFatura(c.id, ym);
+        if (!f.total && !f.pago) continue;
+        const pags = S.d.lancs.filter((l) => l.tipo === "fatura" && l.cartao === c.id && l.fatura === ym);
+        L.push(`FATURA ${nomeMes(ym)} (vence ${vencimentoData(c.id, ym)}): total ${R(f.total)}; pago ${R(f.pago)}${f.quitada ? " (marcada como quitada)" : ""}; falta ${R(f.falta)}; ${f.itens.length} compra(s)
+Pagamentos: ${pags.length ? pags.map((l) => `${l.data} ${R(l.valor)} de ${conta(l.conta)}`).join("; ") : "nenhum"}
+Compras — data da compra; categoria; valor; parcela${esconder ? "" : "; descrição"}
+${[...f.itens].sort((a, b) => a.data.localeCompare(b.data)).map((l) => `${l.data}; ${cat(l.cat).nome}; ${R(l.valor)}${l.parc ? `; ${l.parc.n}/${l.parc.t}` : "; à vista"}${l.fatMes ? "; fatura escolhida à mão" : ""}${esconder ? "" : `; ${desc(l)}`}`).join("\n") || "(nenhuma)"}
+`);
+      }
+      const fim = P.meses[P.meses.length - 1], fut = S.d.lancs.filter((l) => l.tipo === "despesa" && l.cartao === c.id && l.parc && faturaDoLanc(l) > fim);
+      if (fut.length) L.push(`PARCELAS QUE AINDA VÃO CAIR no ${c.nome} (depois do período): ${R(somaV(fut))}\n${fut.sort((a, b) => a.data.localeCompare(b.data)).map((l) => `fatura ${faturaDoLanc(l)}; ${cat(l.cat).nome}; ${R(l.valor)}; ${l.parc.n}/${l.parc.t}${esconder ? "" : `; ${desc(l)}`}`).join("\n")}\n`);
+    }
+  } else if (rel === "gastos") {
+    const g = dadosGastos(P, det);
+    const por = {}; for (const x of [...g.itens, ...g.fixos]) por[cat(x.cat).nome] = (por[cat(x.cat).nome] || 0) + x.valor;
+    L.push(`TOTAIS: gasto ${R(g.total)}; pago ${R(g.pago)}; a pagar ${R(g.aPagar)}; em faturas seguintes ${R(g.cart)}\nPOR CATEGORIA\n${Object.entries(por).sort((a, b) => b[1] - a[1]).map(([k, v]) => `${k}: ${R(v)}`).join("\n")}\n`);
+    if (variosMeses(P)) L.push(`MÊS A MÊS (mês; gasto)\n${P.meses.map((m) => `${m}; ${R(dadosGastos(perDoMes(P, m), det).total)}`).join("\n")}\n`);
+    L.push(lista("LANÇAMENTOS", g.itens));
+    if (g.fixos.length) L.push(`FIXOS AINDA NÃO CONFIRMADOS — mês; nome; valor\n${g.fixos.map((f) => `${f.ym}; ${nomeFx(f)}${f.varia ? " (média)" : ""}; ${R(f.valor)}`).join("\n")}\n`);
+  } else if (rel === "receitas") {
+    const g = dadosReceitas(P, det);
+    L.push(`TOTAIS: receitas ${R(g.total)}; recebido ${R(g.recebido)}; a receber ${R(g.aReceber)}`);
+    if (variosMeses(P)) L.push(`MÊS A MÊS (mês; receitas)\n${P.meses.map((m) => `${m}; ${R(dadosReceitas(perDoMes(P, m), det).total)}`).join("\n")}\n`);
+    L.push(lista("RECEITAS LANÇADAS", g.itens));
+    if (g.fixos.length) L.push(`FIXAS AINDA NÃO CONFIRMADAS — mês; nome; valor\n${g.fixos.map((f) => `${f.ym}; ${nomeFx(f)}; ${R(f.valor)}`).join("\n")}\n`);
+    if (g.planosOk.length || g.planosFalta.length) L.push(`PLANOS E EMPRÉSTIMOS\nRecebido: ${g.planosOk.map((l) => `${l.data} ${R(l.valor)} (${nInv[l.inv] || "plano"})`).join("; ") || "nada"}\nA receber: ${g.planosFalta.map((x) => `${x.data} ${R(x.valor)} (${nInv[x.inv.id]}${x.atrasada ? ", atrasada" : ""})`).join("; ") || "nada"}\n`);
+  } else if (rel === "fixos") {
+    const fs = det.startsWith("fx:") ? S.d.fixos.filter((f) => f.id === det.slice(3)) : S.d.fixos.filter((f) => det === "des" ? f.tipo === "despesa" : det === "rec" ? f.tipo === "receita" : true);
+    const ms = variosMeses(P) ? P.meses : Array.from({ length: 6 }, (_, i) => somaMes(P.mes, i - 5));
+    L.push(`TOTAIS POR MÊS (mês; receitas fixas; despesas fixas; livre)\n${ms.map((m) => { const r = totFixos(m, "receita"), d = totFixos(m, "despesa"); return `${m}${m > mesAtual() ? " (previsto)" : ""}; ${R(r)}; ${R(d)}; ${R(r - d)}`; }).join("\n")}\n`);
+    L.push(`CADA RECORRENTE — nome; tipo; valor cadastrado; dia; começa em; e o valor de cada mês (real / previsto / média / pulou)\n${fs.map((f) => `${nomeFx(f)}; ${f.tipo}; ${f.varia ? "média " : ""}${R(f.valor)}; dia ${f.dia}; desde ${f.inicio}${f.fim ? `; até ${somaMes(f.fim, -1)}` : ""}\n  ${ms.map((m) => { const x = valorFixoMes(f, m); return `${m}: ${!x ? "—" : x.st === "pulou" ? "pulou" : `${R(x.v)} ${x.st === "ok" ? "real" : f.varia ? "média" : "previsto"}`}`; }).join(" | ")}`).join("\n")}\n`);
+  } else if (rel === "es") {
+    const contas = det === "benef" ? S.d.contas.filter(ehBenef) : det.startsWith("conta:") ? S.d.contas.filter((c) => c.id === det.slice(6)) : S.d.contas.filter((c) => !ehBenef(c));
+    const ids = new Set(contas.map((c) => c.id)), ate = P.ate > hj ? hj : P.ate;
+    L.push(`SALDOS — conta; saldo em ${diaAntes(P.de)}; saldo em ${ate}\n${contas.map((c) => `${c.nome}; ${R(saldoConta(c.id, diaAntes(P.de)))}; ${R(saldoConta(c.id, ate))}`).join("\n")}\n`);
+    const movs = S.d.lancs.filter((l) => l.data >= P.de && l.data <= ate && ((ids.has(l.conta) && (["receita", "resg", "fatura", "aplic"].includes(l.tipo) || (l.tipo === "despesa" && !l.cartao))) || (l.tipo === "transf" && ids.has(l.conta) !== ids.has(l.destino))));
+    const sinal = (l) => (l.tipo === "receita" || l.tipo === "resg" || (l.tipo === "transf" && ids.has(l.destino)) ? "+" : "−");
+    const tipoN = { receita: "receita", resg: "resgate", fatura: "pagamento de fatura", aplic: "aplicação", despesa: "despesa", transf: "transferência" };
+    L.push(`MOVIMENTOS NAS CONTAS — data; entrada(+)/saída(−); tipo; valor; conta; categoria${esconder ? "" : "; descrição"}\n${movs.sort((a, b) => a.data.localeCompare(b.data)).map((l) => `${l.data}; ${sinal(l)}; ${tipoN[l.tipo]}${l.tipo === "fatura" ? ` ${cartao(l.cartao).nome} ${l.fatura}` : ""}; ${R(l.valor)}; ${l.tipo === "transf" ? `${conta(l.conta)} → ${conta(l.destino)}` : conta(l.conta)}; ${l.cat ? cat(l.cat).nome : ""}${esconder ? "" : `; ${desc(l)}`}`).join("\n") || "(nenhum)"}\n`);
+  } else if (rel === "inv") {
+    const ivs = det ? S.d.invest.filter((i) => i.id === det) : S.d.invest, ids = new Set(ivs.map((i) => i.id)), ate = P.ate > hj ? hj : P.ate;
+    L.push(`INVESTIMENTOS — nome; tipo; saldo em ${diaAntes(P.de)}; saldo em ${ate}\n${ivs.map((i) => `${nInv[i.id]}; ${i.tipo}; ${R(saldoInv(i.id, diaAntes(P.de)))}; ${R(saldoInv(i.id, ate))}`).join("\n")}\n`);
+    const movs = S.d.lancs.filter((l) => ehInvest(l.tipo) && ids.has(l.inv) && l.data >= P.de && l.data <= ate);
+    L.push(`MOVIMENTAÇÕES — data; tipo; investimento; valor\n${movs.sort((a, b) => a.data.localeCompare(b.data)).map((l) => `${l.data}; ${{ aplic: "aplicação", resg: "resgate", rend: l.perda ? "perda" : "rendimento" }[l.tipo]}; ${nInv[l.inv]}; ${R(l.valor)}`).join("\n") || "(nenhuma)"}\n`);
+    const prog = P.int ? [] : P.meses.flatMap((ym) => progAReceber(ym)).filter((x) => ids.has(x.inv.id));
+    if (prog.length) L.push(`A RECEBER NO PERÍODO — data; investimento; valor\n${prog.map((x) => `${x.data}; ${nInv[x.inv.id]}; ${R(x.valor)}${x.atrasada ? " (atrasada)" : ""}`).join("\n")}\n`);
+  } else {
+    const g = dadosGastos(P, ""), r = dadosReceitas(P, "");
+    L.push(`TOTAIS DO PERÍODO: entrou ${R(r.total)}; saiu ${R(g.total)}; sobrou ${R(r.total - g.total)}`);
+    if (!P.int) { const df = P.meses.reduce((t, m) => t + totFixos(m, "despesa"), 0), rf = P.meses.reduce((t, m) => t + totFixos(m, "receita"), 0); L.push(`FIXOS: receitas fixas ${R(rf)}; despesas fixas ${R(df)}; livre ${R(rf - df)}; despesas variáveis ${R(Math.max(0, g.total - df))}`); }
+    if (variosMeses(P)) L.push(`MÊS A MÊS (mês; entrou; saiu; sobrou)\n${P.meses.map((m) => { const pm = perDoMes(P, m), a = dadosReceitas(pm, "").total, b = dadosGastos(pm, "").total; return `${m}; ${R(a)}; ${R(b)}; ${R(a - b)}`; }).join("\n")}`);
+    const por = {}; for (const x of [...g.itens, ...g.fixos]) por[cat(x.cat).nome] = (por[cat(x.cat).nome] || 0) + x.valor;
+    L.push(`\nGASTOS POR CATEGORIA\n${Object.entries(por).sort((a, b) => b[1] - a[1]).map(([k, v]) => `${k}: ${R(v)}`).join("\n")}\n`);
+    L.push(lista("DESPESAS LANÇADAS", g.itens));
+    L.push(lista("RECEITAS LANÇADAS", r.itens));
+  }
+  return L.join("\n");
+}
+// O que vai no texto, em uma frase (mostrado antes de enviar)
+function resumoEnvioIA(per, rel, det) {
+  const P = infoPer(per), fl = rotuloDetalhe(rel, det);
+  const o = {
+    resumo: "totais (entrou, saiu, sobrou), fixos e livre, gastos por categoria, despesas e receitas lançadas",
+    gastos: "totais, gastos por categoria, cada lançamento (data, categoria, valor, forma de pagamento) e fixos a confirmar",
+    receitas: "totais, cada receita (data, categoria, valor, conta), fixas a confirmar e planos/empréstimos",
+    fixos: "receitas fixas, despesas fixas e livre de cada mês, e o valor de cada recorrente mês a mês",
+    es: "saldo inicial e final de cada conta e cada entrada e saída (data, tipo, valor)",
+    cartoes: "cada fatura (total, pago, vencimento), os pagamentos, cada compra (data, valor, parcela) e as parcelas que ainda vão cair",
+    inv: "saldo de cada investimento, as movimentações e o que está para receber",
+  }[rel];
+  return `${relInfo(rel)[1]}${det ? ` · ${fl}` : ""} de ${P.rot}: ${o} · e o pedido certo para a IA.`;
+}
+
 function abrirEnviarIA() {
-  let tudo = true, esconder = true, de = somaMes(mesAtual(), -5), ate = mesAtual();
+  // "Escolher o que enviar" já vem com os filtros que estão na tela do relatório
+  const fr = filtroRel(), esc3 = { per: { ...fr.per }, rel: fr.rel, det: fr.det };
+  let tudo = !(fr.rel !== "resumo" || fr.det), esconder = true;
   const el = abrirCamada(`<div data-iac></div>`);
   const pintar = () => {
     const prim = S.d.lancs.reduce((m, l) => (l.data < m ? l.data : m), hoje()).slice(0, 7);
-    $("[data-iac]", el).innerHTML = `<div class="ia-cab"><span class="ia-ic">${ic("sparkles")}</span><div><b>Peça uma análise para a sua IA</b><small>Envia todo o seu histórico, já organizado, para o ChatGPT, Claude ou Gemini.</small></div></div>
-      <div class="seg3"><button data-tudo="1" class="${tudo ? "on" : ""}">Tudo (completo)</button><button data-tudo="0" class="${tudo ? "" : "on"}">Só um período</button></div>
-      ${tudo ? "" : `<div class="dois"><label>De<input type="month" name="de" value="${de}"></label><label>Até<input type="month" name="ate" value="${ate}"></label></div>`}
-      <div class="inc">${["Resumo geral e patrimônio", tudo ? `Mês a mês desde ${mesCurto(prim)}/${prim.slice(2, 4)}` : "Mês a mês do período", "Categorias, fixos e cartões", "Investimentos e empréstimos", "Previsão dos próximos meses", "Lançamentos detalhados"].map((t) => `<div>${ic("check")}<span>${t}</span></div>`).join("")}</div>
+    if (!opcoesDetalhe(esc3.rel).some((o) => o.valor === esc3.det)) esc3.det = "";
+    const linhaEsc = (attr, icone, cap, txt) => `<button class="ia-sel" ${attr}>${ic(icone)}<span><small>${cap}</small><b>${esc(txt)}</b></span><em>trocar</em></button>`;
+    $("[data-iac]", el).innerHTML = `<div class="ia-cab"><span class="ia-ic">${ic("sparkles")}</span><div><b>Peça uma análise para a sua IA</b><small>${tudo ? "Envia todo o seu histórico, já organizado, para o ChatGPT, Claude ou Gemini." : "Escolha o que mandar. Só isso sai do seu celular."}</small></div></div>
+      <div class="seg3"><button data-tudo="1" class="${tudo ? "on" : ""}">Tudo (completo)</button><button data-tudo="0" class="${tudo ? "" : "on"}">Escolher o que enviar</button></div>
+      ${tudo ? `<div class="inc">` : `<div class="ia-sels">${linhaEsc("data-iaper", "calendar", "Período", infoPer(esc3.per).rot)}${linhaEsc("data-iarel", relInfo(esc3.rel)[2], "Analisar", relInfo(esc3.rel)[1])}${linhaEsc("data-iadet", "search", "Filtrar por", rotuloDetalhe(esc3.rel, esc3.det))}</div>
+      <p class="ia-obs">Já vem com os filtros que estão na tela do relatório.</p>
+      <div class="ia-vai"><b>O que vai no texto</b>${esc(resumoEnvioIA(esc3.per, esc3.rel, esc3.det))}</div><div class="inc" hidden>`}${["Resumo geral e patrimônio", tudo ? `Mês a mês desde ${mesCurto(prim)}/${prim.slice(2, 4)}` : "Mês a mês do período", "Categorias, fixos e cartões", "Investimentos e empréstimos", "Previsão dos próximos meses", "Lançamentos detalhados"].map((t) => `<div>${ic("check")}<span>${t}</span></div>`).join("")}</div>
       <label class="tog"><span><b>Esconder nomes e descrições</b><small>Troca nomes de pessoas e descrições por “Empréstimo 1”, só a categoria etc.</small></span><input type="checkbox" data-esc ${esconder ? "checked" : ""}><i class="sw"></i></label>
       <p class="aviso-ia">${ic("eye-off")}<span>Os dados saem do seu celular quando você envia para a IA.</span></p>
       <div class="bts2"><button class="btn contorno" data-copiar>${ic("list")}Copiar texto</button><button class="btn preto" data-enviar>${ic("share-2")}Enviar para app</button></div>`;
     el.querySelectorAll("[data-tudo]").forEach((b) => (b.onclick = () => { tudo = b.dataset.tudo === "1"; pintar(); }));
-    const fd = $("input[name=de]", el), fa = $("input[name=ate]", el);
-    if (fd) fd.onchange = () => { de = fd.value || de; if (de > ate) ate = de; pintar(); };
-    if (fa) fa.onchange = () => { ate = fa.value || ate; if (ate < de) de = ate; pintar(); };
+    const bp = $("[data-iaper]", el), br = $("[data-iarel]", el), bd = $("[data-iadet]", el);
+    if (bp) bp.onclick = async () => { const p = await pedirPeriodo(esc3.per); if (p) esc3.per = p; pintar(); };
+    if (br) br.onclick = async () => { const v = await escolherAssunto(esc3.rel); if (v && v !== esc3.rel) { esc3.rel = v; esc3.det = ""; } pintar(); };
+    if (bd) bd.onclick = async () => { const v = await escolher(`Filtrar ${relInfo(esc3.rel)[1].toLowerCase()} por`, opcoesDetalhe(esc3.rel), esc3.det); if (v !== null && v !== undefined) esc3.det = v; pintar(); };
     $("[data-esc]", el).onchange = (e) => { esconder = e.target.checked; };
-    const texto = () => gerarTextoIA(tudo ? { esconder } : { de, ate, esconder });
+    const texto = () => (tudo ? gerarTextoIA({ esconder }) : gerarTextoIAFiltro({ ...esc3, esconder }));
     $("[data-copiar]", el).onclick = async () => {
       const t = texto();
       try { await navigator.clipboard.writeText(t); }
@@ -1287,7 +1405,7 @@ function abrirEnviarIA() {
       aviso(t.length > 60000 ? "Copiado! O texto é grande: se a IA cortar, use “Enviar para app” (vai como arquivo)." : "Copiado! Agora é só colar na sua IA.");
     };
     $("[data-enviar]", el).onclick = async () => {
-      const t = texto(), nome = `financas-para-ia-${hoje()}.txt`;
+      const t = texto(), nome = `financas-para-ia-${tudo ? "" : esc3.rel + "-"}${hoje()}.txt`;
       const arq = new File([t], nome, { type: "text/plain" });
       try {
         if (t.length > 20000 && navigator.canShare && navigator.canShare({ files: [arq] })) return await navigator.share({ files: [arq], title: "Minhas finanças", text: "Analise minhas finanças (dados no arquivo)." });
@@ -1307,18 +1425,33 @@ function gastosPorCat(ym, tipo = "despesa") {
   return Object.entries(o).sort((a, b) => b[1] - a[1]).map(([id, v]) => ({ id, v }));
 }
 const kpi = (rot, v, sub, cls = "") => `<div class="kp"><small>${rot}</small><b class="num">${v}</b>${sub ? `<em class="${cls}">${sub}</em>` : ""}</div>`;
+// 2º filtro "Analisar" (o assunto). Com período de vários meses, todo relatório mostra o mês a mês e a média.
 const RELS = [
-  ["gastos", "Gastos", "receipt", "O que você comprou, pela data da compra"],
-  ["es", "Entrou e saiu", "arrow-left-right", "O que mexeu no saldo das contas"],
+  ["resumo", "Resumo", "chart-pie", "Visão geral: entrou, saiu, sobrou, fixos e onde mais gastou"],
+  ["gastos", "Gastos", "receipt", "O que você comprou, por categoria e forma de pagamento"],
+  ["receitas", "Receitas", "trending-up", "De onde veio o dinheiro: salário, vales, extras"],
+  ["fixos", "Fixos", "repeat", "Receitas fixas − despesas fixas = livre"],
+  ["es", "Contas e saldo", "wallet", "O que entrou e saiu de cada conta e o saldo"],
   ["cartoes", "Cartões", "credit-card", "Faturas, compras e parcelas de cada cartão"],
   ["inv", "Investimentos", "piggy-bank", "Aplicações, resgates e rendimentos"],
-  ["comp", "Comparar meses", "chart-line", "Receitas x despesas, mês a mês"],
 ];
 const relInfo = (k) => RELS.find((r) => r[0] === k) || RELS[0];
-const filtroPadrao = () => ({ per: { t: "mes", ym: mesAtual() }, rel: "gastos", det: "" });
+const filtroPadrao = () => ({ per: { t: "mes", ym: mesAtual() }, rel: "resumo", det: "" });
+// filtro salvo antes da 3.30 ("Comparar meses") vira o assunto equivalente
+function migrarFiltro(f) {
+  if (f.rel !== "comp") return f;
+  const d = f.det || "";
+  if (d === "fixos") return { ...f, rel: "fixos", det: "" };
+  if (d === "rec") return { ...f, rel: "receitas", det: "" };
+  if (d === "des") return { ...f, rel: "gastos", det: "" };
+  if (d.startsWith("cat:")) return { ...f, rel: "gastos", det: d };
+  return { ...f, rel: "resumo", det: "" };
+}
 function filtroRel() {
   if (!S.rf) { try { S.rf = JSON.parse(localStorage.getItem("gf_rel_filtro")) || filtroPadrao(); } catch { S.rf = filtroPadrao(); } }
   if (!S.rf.per || !S.rf.rel) S.rf = filtroPadrao();
+  S.rf = migrarFiltro(S.rf);
+  if (!RELS.some((r) => r[0] === S.rf.rel)) S.rf.rel = "resumo";
   return S.rf;
 }
 const guardarFiltro = () => { try { localStorage.setItem("gf_rel_filtro", JSON.stringify(S.rf)); } catch {} };
@@ -1364,10 +1497,56 @@ function verLista(titulo, lancs, sub, semTotal) {
   el.querySelectorAll("[data-lanc]").forEach((b) => (b.onclick = () => trocarCamada(() => abrirLanc(b.dataset.lanc))));
 }
 
+/* --- Mês a mês: todo relatório com período de vários meses mostra o gráfico, a tabela e a média --- */
+const variosMeses = (P) => P.meses.length > 1;
+// o período de um mês só, dentro do período escolhido (no intervalo de datas, o 1º e o último mês podem ser parciais)
+function perDoMes(P, ym) {
+  const m = infoPer({ t: "mes", ym });
+  if (!P.int) return m;
+  return { ...m, de: m.de < P.de ? P.de : m.de, ate: m.ate > P.ate ? P.ate : m.ate, int: true, ant: null };
+}
+// tira os meses vazios do começo (antes de existir qualquer dado)
+function cortarInicio(linhas, cols) {
+  const am = mesAtual();
+  let i = 0;
+  while (i < linhas.length - 1 && linhas[i].m < am && !cols.some((c) => linhas[i][c.k])) i++;
+  return linhas.slice(i);
+}
+// média por mês: só conta os meses que têm algum valor
+const mediaMeses = (linhas, k, cols) => { const com = linhas.filter((x) => (cols || [{ k }]).some((c) => x[c.k])); return com.length ? com.reduce((t, x) => t + (x[k] || 0), 0) / com.length : 0; };
+// cols: [{ k, rot, bar: "r" | "d" | "" , sinal: true }]
+function blocoMesAMes(linhas, cols, opc = {}) {
+  const am = mesAtual(), gr = cols.filter((c) => c.bar);
+  const mx = Math.max(1, ...linhas.flatMap((x) => gr.map((c) => Math.max(0, x[c.k] || 0))));
+  const cel = (c, v) => `<td class="num ${c.sinal && v < 0 ? "neg" : ""}">${v ? (v < 0 ? "− " : "") + fmt(Math.abs(v)) : "—"}</td>`;
+  return `<div class="box"><h3>${opc.titulo || "Mês a mês"}<span>${gr.map((c) => `<i class="lg ${c.bar}"></i>${c.rot}`).join(" ")}</span></h3>
+    <div class="grafb gb-mini">${linhas.map((x) => `<button class="gm ${x.m === (opc.ref || am) ? "on" : ""}" data-irmes="${x.m}"><span class="p">${gr.map((c) => `<i class="${c.bar}" style="height:${(Math.max(0, x[c.k] || 0) / mx) * 100}%"></i>`).join("")}</span><small>${mesCurto(x.m)}</small></button>`).join("")}</div></div>
+    <div class="box"><table class="ano"><tr><th>Mês</th>${cols.map((c) => `<th>${c.rot}</th>`).join("")}</tr>
+    ${linhas.map((x) => `<tr class="${x.m === am ? "atual" : ""}" data-irmes="${x.m}"><td>${mesCurto(x.m)}${x.m.slice(0, 4) !== am.slice(0, 4) ? "/" + x.m.slice(2, 4) : ""}${x.m > am ? `<small class="prev-m">prev.</small>` : ""}</td>${cols.map((c) => cel(c, x[c.k] || 0)).join("")}</tr>`).join("")}
+    <tr class="tot"><td>Média</td>${cols.map((c) => cel(c, mediaMeses(linhas, c.k, cols))).join("")}</tr></table></div>
+    ${opc.nota ? `<p class="rel-nota">${opc.nota}</p>` : ""}`;
+}
+// rótulo dos meses que entraram na média: "out a dez"
+const faixaRot = (linhas) => linhas.length ? (linhas.length === 1 ? mesCurto(linhas[0].m) : `${mesCurto(linhas[0].m)}${linhas[0].m.slice(0, 4) !== linhas[linhas.length - 1].m.slice(0, 4) ? "/" + linhas[0].m.slice(2, 4) : ""} a ${mesCurto(linhas[linhas.length - 1].m)}${linhas[0].m.slice(0, 4) !== linhas[linhas.length - 1].m.slice(0, 4) ? "/" + linhas[linhas.length - 1].m.slice(2, 4) : ""}`) : "";
+
 /* --- 1. Gastos (data da compra) --- */
+// x pode ser um lançamento ou um fixo ainda não confirmado (o fixo tem "inicio")
+const ehDeFixo = (x) => !!x.fixo || x.inicio !== undefined;
+const ehDeBenef = (x) => !temCartao(x.cartao) && !!x.conta && ehBenef(S.d.contas.find((c) => c.id === x.conta));
+function passaGasto(x, det) {
+  if (!det) return true;
+  if (det.startsWith("cat:")) return x.cat === det.slice(4);
+  if (det.startsWith("cart:")) return temCartao(x.cartao) && x.cartao === det.slice(5);
+  if (det === "cartao") return temCartao(x.cartao);
+  if (det === "benef") return ehDeBenef(x);
+  if (det === "vista") return !temCartao(x.cartao) && !ehDeBenef(x);
+  if (det === "fixos") return ehDeFixo(x);
+  if (det === "var") return !ehDeFixo(x);
+  return true;
+}
 function dadosGastos(P, det) {
   const hj = hoje(), jaFoi = criarJaFoi(hj);
-  const passa = (x) => !det ? true : det.startsWith("cat:") ? x.cat === det.slice(4) : det === "cartao" ? temCartao(x.cartao) : !temCartao(x.cartao);
+  const passa = (x) => passaGasto(x, det);
   const itens = S.d.lancs.filter((l) => l.tipo === "despesa" && naFaixa(l, P) && passa(l));
   const fixos = P.int ? [] : P.meses.flatMap((ym) => fixosPendentes(ym).filter((f) => f.tipo === "despesa" && passa(f)).map((f) => ({ ...f, ym, data: dataFixo(f, ym) })));
   let pago = 0, aPagar = 0, cart = 0;
@@ -1377,10 +1556,15 @@ function dadosGastos(P, det) {
 }
 function relGastos(P, det) {
   const g = dadosGastos(P, det), ga = P.ant ? dadosGastos(infoPer(P.ant), det) : null;
-  const k = `<div class="kps">${kpi(P.mes ? "Gasto no mês" : "Gasto", fmt(g.total), ga ? (ga.total ? `${g.total >= ga.total ? "↑" : "↓"} ${Math.abs(Math.round(((g.total - ga.total) / ga.total) * 100))}% vs ${P.antRot.slice(0, 3)}.` : "") : "", ga && g.total > ga.total ? "verm" : "verde")}
+  const cols = [{ k: "v", rot: "Gasto", bar: "d" }];
+  const linhas = variosMeses(P) ? cortarInicio(P.meses.map((m) => ({ m, v: dadosGastos(perDoMes(P, m), det).total })), cols) : [];
+  const k = variosMeses(P)
+    ? `<p class="k-media">Média por mês · ${faixaRot(linhas)}</p><div class="kps">${kpi("Gasto por mês", fmt(mediaMeses(linhas, "v")), `total ${fmt(g.total)}`)}
+      ${kpi("Pago", fmt(g.pago), `${pct(g.pago, g.total)}% do total`, "verde")}${kpi("A pagar", fmt(g.aPagar), g.cart ? `+ ${fmt(g.cart)} fat. seg.` : "", "amarelo")}</div>`
+    : `<div class="kps">${kpi(P.mes ? "Gasto no mês" : "Gasto", fmt(g.total), ga ? (ga.total ? `${g.total >= ga.total ? "↑" : "↓"} ${Math.abs(Math.round(((g.total - ga.total) / ga.total) * 100))}% vs ${P.antRot.slice(0, 3)}.` : "") : "", ga && g.total > ga.total ? "verm" : "verde")}
     ${kpi("Pago", fmt(g.pago), `${pct(g.pago, g.total)}% do total`, "verde")}
     ${kpi("A pagar", fmt(g.aPagar), g.cart ? `+ ${fmt(g.cart)} fat. seg.` : "", "amarelo")}</div>`;
-  let corpo = "";
+  let corpo = linhas.length ? blocoMesAMes(linhas, cols) : "";
   if (det.startsWith("cat:")) {
     const todos = [...g.itens].sort((a, b) => b.data.localeCompare(a.data));
     corpo += `<div class="box sem-pad"><h3 class="h3pad">Lançamentos<span>${todos.length}</span></h3><div class="lista-rel">${todos.map((l) => itemLanc(l, true)).join("") || `<p class="vazio">Nenhum gasto nessa categoria.</p>`}</div></div>`;
@@ -1388,7 +1572,7 @@ function relGastos(P, det) {
     const por = {}; for (const l of g.itens) por[l.cat] = (por[l.cat] || 0) + l.valor;
     const porA = {}; if (ga) for (const l of ga.itens) porA[l.cat] = (porA[l.cat] || 0) + l.valor;
     const ord = Object.entries(por).sort((a, b) => b[1] - a[1]), tot = ord.reduce((t, x) => t + x[1], 0), max = ord.length ? ord[0][1] : 1;
-    corpo += `<div class="box"><h3>Por categoria${ga ? `<span>vs ${P.antRot}</span>` : ""}</h3>${ord.map(([id, v]) => { const c = cat(id);
+    corpo += `<div class="box"><h3>Por categoria${ga && !variosMeses(P) ? `<span>vs ${P.antRot}</span>` : ga ? `<span>vs ${P.antRot}</span>` : ""}</h3>${ord.map(([id, v]) => { const c = cat(id);
       return linhaBarra(`data-det="cat:${id}"`, c.icone, c.cor, c.nome, v, max, `<span>${pct(v, tot)}% do total</span>${ga ? variacao(v, porA[id]) : ""}`); }).join("") || `<p class="vazio">Nenhum gasto no período.</p>`}</div>`;
     if (!det) {
       const cartao = g.itens.filter((l) => temCartao(l.cartao)), ben = g.itens.filter((l) => !temCartao(l.cartao) && l.conta && ehBenef(S.d.contas.find((c) => c.id === l.conta)));
@@ -1403,7 +1587,137 @@ function relGastos(P, det) {
   return { k, corpo };
 }
 
-/* --- 2. Entrou e saiu (pela conta) --- */
+/* --- Receitas (de onde veio o dinheiro) --- */
+// Igual ao Início: receitas lançadas + fixas ainda não confirmadas + recebimentos de planos/empréstimos (só em "Todas")
+function passaReceita(x, det) {
+  if (!det) return true;
+  if (det === "fixas") return ehDeFixo(x);
+  if (det === "avulsas") return !ehDeFixo(x);
+  if (det.startsWith("cat:")) return x.cat === det.slice(4);
+  if (det.startsWith("conta:")) return x.conta === det.slice(6);
+  return true;
+}
+function dadosReceitas(P, det) {
+  const hj = hoje();
+  const itens = S.d.lancs.filter((l) => l.tipo === "receita" && naFaixa(l, P) && passaReceita(l, det));
+  const fixos = P.int ? [] : P.meses.flatMap((ym) => fixosPendentes(ym).filter((f) => f.tipo === "receita" && passaReceita(f, det)).map((f) => ({ ...f, ym, data: dataFixo(f, ym) })));
+  const planosOk = det ? [] : S.d.lancs.filter((l) => l.tipo === "resg" && l.prog && naFaixa(l, P));
+  const planosFalta = det || P.int ? [] : P.meses.flatMap((ym) => progAReceber(ym));
+  const recebido = somaV(itens.filter((l) => l.data <= hj)) + somaV(planosOk);
+  const aReceber = somaV(itens.filter((l) => l.data > hj)) + somaV(fixos) + planosFalta.reduce((t, x) => t + x.valor, 0);
+  return { itens, fixos, planosOk, planosFalta, recebido, aReceber, total: recebido + aReceber };
+}
+function relReceitas(P, det) {
+  const g = dadosReceitas(P, det), ga = P.ant && !variosMeses(P) ? dadosReceitas(infoPer(P.ant), det) : null;
+  const cols = [{ k: "v", rot: "Receitas", bar: "r" }];
+  const linhas = variosMeses(P) ? cortarInicio(P.meses.map((m) => ({ m, v: dadosReceitas(perDoMes(P, m), det).total })), cols) : [];
+  const vs = ga && ga.total ? `${g.total >= ga.total ? "↑" : "↓"} ${Math.abs(Math.round(((g.total - ga.total) / ga.total) * 100))}% vs ${P.antRot.slice(0, 3)}.` : "";
+  const k = variosMeses(P)
+    ? `<p class="k-media">Média por mês · ${faixaRot(linhas)}</p><div class="kps">${kpi("Receitas por mês", fmt(mediaMeses(linhas, "v")), `total ${fmt(g.total)}`, "verde")}${kpi("Recebido", fmt(g.recebido), `${pct(g.recebido, g.total)}% do total`, "verde")}${kpi("A receber", fmt(g.aReceber), "", "amarelo")}</div>`
+    : `<div class="kps">${kpi(P.mes ? "Receitas do mês" : "Receitas", fmt(g.total), vs, ga && g.total < ga.total ? "verm" : "verde")}${kpi("Recebido", fmt(g.recebido), `${pct(g.recebido, g.total)}% do total`, "verde")}${kpi("A receber", fmt(g.aReceber), "", "amarelo")}</div>`;
+  let corpo = linhas.length ? blocoMesAMes(linhas, cols) : "";
+  const todos = [...g.itens, ...g.fixos];
+  if (!det || det === "fixas" || det === "avulsas") {
+    const por = {}; for (const x of todos) por[x.cat] = (por[x.cat] || 0) + x.valor;
+    const porA = {}; if (ga) for (const x of [...ga.itens, ...ga.fixos]) porA[x.cat] = (porA[x.cat] || 0) + x.valor;
+    const planos = somaV(g.planosOk) + g.planosFalta.reduce((t, x) => t + x.valor, 0);
+    const ord = Object.entries(por).sort((a, b) => b[1] - a[1]), max = Math.max(1, ...ord.map((x) => x[1]), planos);
+    corpo += `<div class="box"><h3>Por categoria${ga ? `<span>vs ${P.antRot}</span>` : ""}</h3>${ord.map(([id, v]) => { const c = cat(id);
+      return linhaBarra(`data-det="cat:${id}"`, c.icone, c.cor, c.nome, v, max, `<span>${pct(v, g.total)}% do total</span>${ga ? variacao(v, porA[id], false) : ""}`, "#34D399"); }).join("")}
+      ${planos ? linhaBarra('data-lista="planos"', "hand-coins", "", "Planos e empréstimos", planos, max, `<span>parcelas recebidas e a receber</span>`, "#34D399") : ""}
+      ${!ord.length && !planos ? `<p class="vazio">Nenhuma receita no período.</p>` : ""}</div>`;
+    relReceitas.planos = g.planosOk;
+  }
+  if (!det) {
+    const fx = todos.filter(ehDeFixo), av = todos.filter((x) => !ehDeFixo(x)), mx = Math.max(1, somaV(fx), somaV(av));
+    corpo += `<div class="box"><h3>Fixas x avulsas</h3>${linhaBarra('data-det="fixas"', "repeat", "", "Fixas (recorrentes)", somaV(fx), mx, `<span>salário, vales…</span>`, "#34D399")}
+      ${linhaBarra('data-det="avulsas"', "plus", "", "Avulsas", somaV(av), mx, `<span>extras, vendas, reembolsos…</span>`, "#34D399")}</div>`;
+    const cs = S.d.contas;
+    if (cs.length > 1) {
+      const pc = {}; for (const x of todos) if (x.conta) pc[x.conta] = (pc[x.conta] || 0) + x.valor;
+      const oc = Object.entries(pc).sort((a, b) => b[1] - a[1]);
+      if (oc.length > 1) corpo += `<div class="box sem-pad"><h3 class="h3pad">Em qual conta entrou</h3>${oc.map(([id, v]) => { const c = S.d.contas.find((x) => x.id === id) || { nome: "Conta" };
+        return `<button class="linha-opc" data-det="conta:${id}"><span class="bola">${ic(icConta(c))}</span><span class="meio">${esc(c.nome)}</span><b class="num">${fmtR(v)}</b></button>`; }).join("")}</div>`;
+    }
+  } else {
+    const ord = [...g.itens].sort((a, b) => b.data.localeCompare(a.data));
+    corpo += `<div class="box sem-pad"><h3 class="h3pad">Lançamentos<span>${ord.length}</span></h3><div class="lista-rel">${ord.map((l) => itemLanc(l, true)).join("") || `<p class="vazio">Nenhuma receita aqui.</p>`}</div></div>`;
+  }
+  const falta = [...g.fixos, ...g.itens.filter((l) => l.data > hoje())].sort((a, b) => a.data.localeCompare(b.data));
+  if (falta.length || g.planosFalta.length) corpo += `<div class="box"><h3>Ainda a receber<span>${fmt(g.aReceber)}</span></h3>${falta.map((x) => { const c = cat(x.cat);
+      return `<div class="rl"><span>${esc(x.nota || c.nome)}<small>${x.inicio !== undefined ? `${x.varia ? "média · " : ""}fixo · ` : ""}dia ${dataCurta(x.data)}</small></span><b class="num">${fmt(x.valor)}</b></div>`; }).join("")}
+    ${g.planosFalta.map((x) => `<div class="rl"><span>${esc(x.inv.nome)}<small>${x.rot} · ${x.atrasada ? "atrasada" : `dia ${dataCurta(x.data)}`}</small></span><b class="num">${fmt(x.valor)}</b></div>`).join("")}</div>`;
+  return { k, corpo };
+}
+
+/* --- Resumo (visão geral) --- */
+function relResumo(P) {
+  const tot = (Px) => { const g = dadosGastos(Px, ""), r = dadosReceitas(Px, ""); return { g, r, rec: r.total, des: g.total, res: r.total - g.total }; };
+  const t = tot(P), ta = P.ant && !variosMeses(P) ? tot(infoPer(P.ant)) : null;
+  const cols = [{ k: "rec", rot: "Receitas", bar: "r" }, { k: "des", rot: "Despesas", bar: "d" }, { k: "res", rot: "Sobrou", sinal: true }];
+  const linhas = variosMeses(P) ? cortarInicio(P.meses.map((m) => { const x = tot(perDoMes(P, m)); return { m, rec: x.rec, des: x.des, res: x.res }; }), cols) : [];
+  const sb = (v) => `${v < 0 ? "− " : ""}${fmt(Math.abs(v))}`;
+  let k;
+  if (variosMeses(P)) {
+    const mr = mediaMeses(linhas, "rec", cols), md = mediaMeses(linhas, "des", cols), ms = mediaMeses(linhas, "res", cols);
+    k = `<p class="k-media">Média por mês · ${faixaRot(linhas)}</p><div class="kps">${kpi("Entrou", fmt(mr), `total ${fmt(t.rec)}`, "verde")}${kpi("Saiu", fmt(md), `total ${fmt(t.des)}`, "amarelo")}${kpi("Sobrou", sb(ms), `total ${sb(t.res)}`, ms < 0 ? "verm" : "verde")}</div>`;
+  } else {
+    const vs = ta ? `${P.antRot.slice(0, 3)}.: ${sb(ta.res)}` : t.res < 0 ? "gastou mais" : "no período";
+    k = `<div class="kps">${kpi("Entrou", fmt(t.rec), "receitas", "verde")}${kpi("Saiu", fmt(t.des), "despesas", "amarelo")}${kpi("Sobrou", sb(t.res), vs, t.res < 0 ? "verm" : "verde")}</div>`;
+  }
+  let corpo = "";
+  // fixos x variáveis e o livre
+  if (!P.int && S.d.fixos.length) {
+    const df = P.meses.reduce((s, m) => s + totFixos(m, "despesa"), 0), rf = P.meses.reduce((s, m) => s + totFixos(m, "receita"), 0);
+    const vr = Math.max(0, t.des - df), td = Math.max(1, df + vr), lv = rf - df, n = variosMeses(P) ? Math.max(1, linhas.length) : 1;
+    corpo += `<button class="box rs-fx" data-irpara="fixos|"><h3>Fixos x variáveis${variosMeses(P) ? "<span>média por mês</span>" : ""}</h3>
+      <div class="barx"><i style="width:${(df / td) * 100}%;background:var(--azul, #2B7BBF)"></i><i style="width:${(vr / td) * 100}%;background:#F2B544"></i></div>
+      ${linhaValor("Fixos", `${fmt(df / n)} <span class="pill">${pct(df, td)}%</span>`, "", "aluguel, parcelas, compras do mês…")}${linhaValor("Variáveis", `${fmt(vr / n)} <span class="pill">${pct(vr, td)}%</span>`, "", "o que não se repete")}
+      ${linhaValor("<b>Livre depois dos fixos</b>", `${lv < 0 ? "− " : ""}${fmt(Math.abs(lv / n))}`, lv < 0 ? "neg" : "pos", "receitas fixas − despesas fixas")}</button>`;
+  }
+  if (linhas.length) corpo += blocoMesAMes(linhas, cols);
+  // onde mais gastou
+  const pc = (g) => { const o = {}; for (const x of [...g.itens, ...g.fixos]) o[x.cat] = (o[x.cat] || 0) + x.valor; return o; };
+  const por = pc(t.g), porA = ta ? pc(ta.g) : {}, ord = Object.entries(por).sort((a, b) => b[1] - a[1]).slice(0, 5);
+  if (ord.length) corpo += `<div class="box"><h3>Onde mais gastou${ta ? `<span>vs ${P.antRot}</span>` : ""}</h3>${ord.map(([id, v]) => { const c = cat(id);
+    return linhaBarra(`data-irpara="gastos|cat:${id}"`, c.icone, c.cor, c.nome, v, ord[0][1], `<span>${pct(v, t.des)}% das despesas</span>${ta ? variacao(v, porA[id]) : ""}`); }).join("")}</div>`;
+  // como pagou (só o que foi lançado)
+  const it = t.g.itens, porC = {};
+  for (const l of it) if (temCartao(l.cartao)) porC[l.cartao] = (porC[l.cartao] || 0) + l.valor;
+  const ben = somaV(it.filter(ehDeBenef)), vista = somaV(it.filter((l) => !temCartao(l.cartao) && !ehDeBenef(l))), cart = Object.values(porC).reduce((a, b) => a + b, 0);
+  if (it.length) corpo += `<div class="box"><h3>Como pagou<span>lançados</span></h3>
+    ${cart ? linhaBarra('data-irpara="gastos|cartao"', "credit-card", "", "Cartões de crédito", cart, Math.max(cart, vista, ben), `<span>${Object.entries(porC).sort((a, b) => b[1] - a[1]).map(([c, v]) => `${esc(cartao(c).nome)} ${fmt(v)}`).join(" · ")}</span>`) : ""}
+    ${vista ? linhaBarra('data-irpara="gastos|vista"', "arrow-left-right", "", "Débito / Pix / dinheiro", vista, Math.max(cart, vista, ben)) : ""}
+    ${ben ? linhaBarra('data-irpara="gastos|benef"', "ticket", "", "Benefícios (VA/VR)", ben, Math.max(cart, vista, ben)) : ""}
+    ${t.g.fixos.length ? `<p class="rel-nota" style="margin:8px 0 0">+ ${fmt(somaV(t.g.fixos))} de fixos ainda não confirmados (entram no “Saiu”).</p>` : ""}</div>`;
+  // saldo das contas
+  const hj = hoje(), ate = P.ate > hj ? hj : P.ate, cs = S.d.contas.filter((c) => !ehBenef(c));
+  if (cs.length && P.de <= hj) {
+    const ini = cs.reduce((s, c) => s + saldoConta(c.id, diaAntes(P.de)), 0), fim = cs.reduce((s, c) => s + saldoConta(c.id, ate), 0);
+    corpo += `<button class="box rs-fx" data-irpara="es|"><h3>Saldo das contas</h3>${linhaValor(`Começou ${P.mes ? nomeMes(P.mes).split(" de ")[0] : "o período"} com`, fmt(ini))}${linhaValor(ate < P.ate ? "Hoje está com" : "Terminou com", fmt(fim))}</button>`;
+  }
+  if (linhas.length > 1) {
+    const com = linhas.filter((x) => x.rec || x.des);
+    if (com.length > 1) {
+      const melhor = com.reduce((a, b) => (b.res > a.res ? b : a)), pior = com.reduce((a, b) => (b.res < a.res ? b : a));
+      corpo += `<div class="box"><h3>Destaques</h3>${linhaValor("Melhor mês", `${mesCurto(melhor.m)} · ${sb(melhor.res)}`, "pos", "sobrou mais")}${linhaValor("Pior mês", `${mesCurto(pior.m)} · ${sb(pior.res)}`, "neg", "sobrou menos")}</div>`;
+    }
+  }
+  return { k, corpo };
+}
+
+/* --- 2. Contas e saldo (o que entrou e saiu da conta) --- */
+// Só o total que entrou e saiu das contas (mesmas regras do relatório), para o mês a mês
+function esMov(de, ate, ids) {
+  let E = 0, Sx = 0;
+  for (const l of S.d.lancs) {
+    if (l.data < de || l.data > ate) continue;
+    if ((l.tipo === "receita" || l.tipo === "resg") && ids.has(l.conta)) E += l.valor;
+    else if (((l.tipo === "despesa" && !l.cartao) || l.tipo === "fatura" || l.tipo === "aplic") && ids.has(l.conta)) Sx += l.valor;
+    else if (l.tipo === "transf") { const a = ids.has(l.conta), b = ids.has(l.destino); if (a && !b) Sx += l.valor; if (b && !a) E += l.valor; }
+  }
+  return { E, Sx };
+}
 function relES(P, det) {
   const hj = hoje(), ate = P.ate > hj ? hj : P.ate;
   const contas = det === "benef" ? S.d.contas.filter(ehBenef) : det.startsWith("conta:") ? S.d.contas.filter((c) => c.id === det.slice(6)) : S.d.contas.filter((c) => !ehBenef(c));
@@ -1422,7 +1736,11 @@ function relES(P, det) {
   }
   const E = somaV(ent.rec) + somaV(ent.resg) + somaV(ent.tr), Sx = somaV(sai.fat) + somaV(sai.vista) + somaV(sai.aplic) + somaV(sai.tr);
   relES.listas = { fat: sai.fat, vista: sai.vista, aplic: sai.aplic, trs: sai.tr, resg: ent.resg, tre: ent.tr };
-  const k = `<div class="kps">${kpi("Entrou", fmt(E), "na conta", "verde")}${kpi("Saiu", fmt(Sx), "da conta", "amarelo")}${kpi("Sobrou", `${E - Sx < 0 ? "− " : ""}${fmt(Math.abs(E - Sx))}`, E - Sx < 0 ? "saiu mais" : "no período", E - Sx < 0 ? "verm" : "verde")}</div>`;
+  const cols = [{ k: "e", rot: "Entrou", bar: "r" }, { k: "s", rot: "Saiu", bar: "d" }, { k: "r", rot: "Sobrou", sinal: true }];
+  const linhas = variosMeses(P) ? cortarInicio(P.meses.map((m) => { const f = perDoMes(P, m); if (f.de > hj) return { m, e: 0, s: 0, r: 0 }; const x = esMov(f.de, f.ate > hj ? hj : f.ate, ids); return { m, e: x.E, s: x.Sx, r: x.E - x.Sx }; }), cols) : [];
+  const k = variosMeses(P)
+    ? `<p class="k-media">Média por mês · ${faixaRot(linhas.filter((x) => x.m <= mesAtual()))}</p><div class="kps">${kpi("Entrou", fmt(mediaMeses(linhas, "e", cols)), `total ${fmt(E)}`, "verde")}${kpi("Saiu", fmt(mediaMeses(linhas, "s", cols)), `total ${fmt(Sx)}`, "amarelo")}${kpi("Sobrou", `${E - Sx < 0 ? "− " : ""}${fmt(Math.abs(mediaMeses(linhas, "r", cols)))}`, `total ${E - Sx < 0 ? "− " : ""}${fmt(Math.abs(E - Sx))}`, E - Sx < 0 ? "verm" : "verde")}</div>`
+    : `<div class="kps">${kpi("Entrou", fmt(E), "na conta", "verde")}${kpi("Saiu", fmt(Sx), "da conta", "amarelo")}${kpi("Sobrou", `${E - Sx < 0 ? "− " : ""}${fmt(Math.abs(E - Sx))}`, E - Sx < 0 ? "saiu mais" : "no período", E - Sx < 0 ? "verm" : "verde")}</div>`;
   const porCartao = {}; for (const l of sai.fat) porCartao[l.cartao] = (porCartao[l.cartao] || 0) + l.valor;
   const subFat = Object.entries(porCartao).map(([c, v]) => `${esc(cartao(c).nome)} ${fmt(v)}`).join(" · ");
   const mxS = Math.max(1, somaV(sai.fat), somaV(sai.vista), somaV(sai.aplic), somaV(sai.tr));
@@ -1443,6 +1761,7 @@ function relES(P, det) {
       ${ent.resg.length ? linhaBarra('data-lista="resg"', "trending-up", "", "Resgates de investimentos", somaV(ent.resg), mxE, "", "#34D399") : ""}
       ${ent.tr.length ? linhaBarra('data-lista="tre"', "arrow-left-right", "", "Transferências recebidas", somaV(ent.tr), mxE, "", "#34D399") : ""}
       ${!E ? `<p class="vazio" style="padding:8px">Nada entrou no período.</p>` : ""}</div>`;
+  if (linhas.length) corpo += blocoMesAMes(linhas.filter((x) => x.m <= mesAtual()), cols, { nota: "Só até hoje: o que ainda não aconteceu não mexeu no saldo." });
   if (contas.length > 1) corpo += `<div class="box sem-pad"><h3 class="h3pad">Saldo de cada conta ${ate < P.ate ? "hoje" : `em ${dataCurta(ate)}`}</h3>${contas.map((c) => `<button class="linha-opc" data-det="conta:${c.id}"><span class="bola">${ic(icConta(c))}</span><span class="meio">${esc(c.nome)}${ehBenef(c) ? "<small>benefício</small>" : ""}</span><b class="num">${fmtR(saldoConta(c.id, ate))}</b></button>`).join("")}</div>`;
   return { k, corpo };
 }
@@ -1529,24 +1848,27 @@ function valorFixoMes(f, ym) {
   return null;
 }
 const totFixos = (ym, tipo) => S.d.fixos.filter((f) => f.tipo === tipo).reduce((t, f) => { const x = valorFixoMes(f, ym); return t + (x ? x.v : 0); }, 0);
-function relFixos(P, meses) {
+function relFixos(P, det) {
   if (!S.d.fixos.length) return { k: "", corpo: `<p class="vazio">${ic("repeat")}Nenhum lançamento fixo cadastrado.<br>Cadastre em Perfil → Lançamentos recorrentes.</p>` };
-  const am = mesAtual(), ref = P.mes || (meses.includes(am) ? am : meses[meses.length - 1]), ant = somaMes(ref, -1);
-  // Livre = receitas fixas − despesas fixas (o que fica disponível). Fixo de valor previsto entra pela média até ser confirmado.
-  const rf = totFixos(ref, "receita"), df = totFixos(ref, "despesa"), livre = rf - df;
-  const k = `<div class="rvd rvd-l"><div><small>Receitas fixas</small><b class="num vd">${fmt(rf)}</b></div><span class="menos">−</span><div><small>Despesas fixas</small><b class="num">${fmt(df)}</b></div><span class="menos">=</span><div><small>Livre</small><b class="num lv ${livre < 0 ? "neg" : ""}">${livre < 0 ? "− " : ""}${fmt(Math.abs(livre))}</b></div></div>
-    <div class="livre-pct">${rf ? `os fixos comem ${Math.round((df / rf) * 100)}% da sua renda fixa · livre em ${mesCurto(ref)}.` : "cadastre seu salário como receita fixa para ver quanto fica livre"}</div>`;
-  // gráfico: receitas fixas x despesas fixas, mês a mês
-  let comecou = false;
-  const serie = meses.map((m) => ({ m, r: totFixos(m, "receita"), d: totFixos(m, "despesa") }))
-    .filter((x) => { if (!comecou && !x.r && !x.d) return false; comecou = true; return true; });
-  const mx = Math.max(1, ...serie.map((x) => Math.max(x.r, x.d)));
-  const com = serie.filter((x) => x.r || x.d), n = Math.max(1, com.length);
-  const mR = com.reduce((t, x) => t + x.r, 0) / n, mD = com.reduce((t, x) => t + x.d, 0) / n;
-  let corpo = `<div class="box"><h3>Receitas fixas x despesas fixas<span><i class="lg r"></i>Receitas <i class="lg d"></i>Despesas</span></h3>
-    <div class="grafb">${serie.map((x) => `<button class="gm ${x.m === ref ? "on" : ""}" data-irmes="${x.m}"><span class="p"><i class="r" style="height:${(x.r / mx) * 100}%"></i><i class="d" style="height:${(x.d / mx) * 100}%"></i></span><small>${mesCurto(x.m)}</small></button>`).join("")}</div>
-    <div class="med"><div><small>Média receitas fixas</small><b class="num">${fmt(mR)}</b></div><div><small>Média despesas fixas</small><b class="num">${fmt(mD)}</b></div><div><small>Média livre</small><b class="num ${mR - mD < 0 ? "neg" : "pos"}">${mR - mD < 0 ? "− " : ""}${fmt(Math.abs(mR - mD))}</b></div></div></div>`;
-  // cada fixo: mês passado → este mês
+  if (det.startsWith("fx:")) return relUmFixo(P, fixoPorId(det.slice(3)));
+  const am = mesAtual(), varios = variosMeses(P), soD = det === "des", soR = det === "rec";
+  const ref = P.mes || (P.meses.includes(am) ? am : P.meses[P.meses.length - 1]), ant = somaMes(ref, -1);
+  // um mês: gráfico dos últimos 6 meses até ele; vários meses: o período escolhido
+  const meses = varios ? P.meses : Array.from({ length: 6 }, (_, i) => somaMes(ref, i - 5));
+  const serie = cortarInicio(meses.map((m) => { const r = totFixos(m, "receita"), d = totFixos(m, "despesa"); return { m, r, d, l: r - d }; }), [{ k: "r" }, { k: "d" }]);
+  const cols = [...(soD ? [] : [{ k: "r", rot: "Receitas", bar: "r" }]), ...(soR ? [] : [{ k: "d", rot: "Despesas", bar: "d" }]), ...(soD || soR ? [] : [{ k: "l", rot: "Livre", sinal: true }])];
+  // Topo. Um mês: os valores daquele mês. Vários meses: a média por mês do período (Livre = receitas fixas − despesas fixas).
+  const rf = varios ? mediaMeses(serie, "r", [{ k: "r" }, { k: "d" }]) : totFixos(ref, "receita");
+  const df = varios ? mediaMeses(serie, "d", [{ k: "r" }, { k: "d" }]) : totFixos(ref, "despesa");
+  const livre = rf - df, sn = (v) => `${v < 0 ? "− " : ""}${fmt(Math.abs(v))}`;
+  const totR = serie.reduce((t, x) => t + x.r, 0), totD = serie.reduce((t, x) => t + x.d, 0);
+  const col = (rot, v, cls) => `<div><small>${rot}</small><b class="num ${cls}">${v}</b></div>`;
+  const k = `${varios ? `<p class="k-media">Média por mês · ${faixaRot(serie)}</p>` : ""}<div class="rvd rvd-l">${soD ? col("Despesas fixas", fmt(df), "") : soR ? col("Receitas fixas", fmt(rf), "vd")
+      : `${col("Receitas fixas", fmt(rf), "vd")}<span class="menos">−</span>${col("Despesas fixas", fmt(df), "")}<span class="menos">=</span>${col("Livre", sn(livre), `lv ${livre < 0 ? "neg" : ""}`)}`}</div>
+    <div class="livre-pct">${varios ? `no período todo: ${soD ? `despesas fixas de ${fmt(totD)}` : soR ? `receitas fixas de ${fmt(totR)}` : `livre de ${sn(totR - totD)}`}${totR && !soR ? ` · os fixos comem ${Math.round((totD / totR) * 100)}% da renda fixa` : ""}`
+      : rf ? `${soR ? "receitas fixas" : `os fixos comem ${Math.round((df / rf) * 100)}% da sua renda fixa`} · ${soD || soR ? "" : "livre "}em ${mesCurto(ref)}.` : "cadastre seu salário como receita fixa para ver quanto fica livre"}</div>`;
+  let corpo = blocoMesAMes(serie, cols, { ref, titulo: varios ? "Mês a mês" : "Últimos meses" });
+  // cada fixo: mês anterior → mês de referência
   const chip = (a, b, tipo) => {
     if (a === null) return `<span class="cv neu">novo</span>`;
     if (b === null) return `<span class="cv neu">pulou</span>`;
@@ -1563,9 +1885,8 @@ function relFixos(P, meses) {
       if (!va && !vb) continue;
       const a = va && va.st !== "pulou" ? va.v : (va ? 0 : null), b = vb && vb.st !== "pulou" ? vb.v : (vb ? 0 : null);
       const c = cat(f.cat), nome = f.nota || c.nome;
-      linhas.push(`<div class="lvs"><span class="bo-l">${bola(c.icone, c.cor)}</span><span class="n">${esc(nome)}${f.varia ? `<small class="lvs-v">média · dia ${f.dia}</small>` : ""}</span>
-        <span class="a num">${a === null ? "—" : va.st === "pulou" ? "pulou" : fmt(a)}</span><b class="num ${vb && (vb.st === "prev" || vb.st === "parc") ? "cinza" : ""}">${b === null ? "—" : vb.st === "pulou" ? "pulou" : fmt(b)}</b>${chip(va && va.st === "pulou" ? 0 : a, vb && vb.st === "pulou" ? null : b, tipo)}</div>`);
-      // frases do "o que mais mudou"
+      linhas.push(`<div class="lvs" data-det="fx:${f.id}"><span class="bo-l">${bola(c.icone, c.cor)}</span><span class="n">${esc(nome)}${f.varia ? `<small class="lvs-v">média · dia ${f.dia}</small>` : ""}</span>
+        <span class="a num">${a === null ? "—" : va.st === "pulou" ? "pulou" : fmt(a)}</span><b class="num ${vb && vb.st === "prev" ? "cinza" : ""}">${b === null ? "—" : vb.st === "pulou" ? "pulou" : fmt(b)}</b>${chip(va && va.st === "pulou" ? 0 : a, vb && vb.st === "pulou" ? null : b, tipo)}</div>`);
       const A = a || 0, B = b || 0, d = B - A;
       if (f.varia && vb && vb.st === "prev") continue; // ainda é a média: não compara
       if (va && va.st === "pulou" && B) mudancas.push({ p: B, v: `<span class="cv neu">volta</span>`, t: `${esc(nome)} voltou depois de pular ${mesCurto(ant)}.` });
@@ -1584,76 +1905,71 @@ function relFixos(P, meses) {
       <div class="cab-vs"><span></span><span></span><span>${mesCurto(ant)}</span><span>${mesCurto(ref)}</span><span></span></div>${linhas.join("")}
       <div class="lvs tot"><span></span><span class="n"><b>Total</b></span><span class="a num">${fmt(ta)}</span><b class="num">${fmt(tb)}</b>${chip(ta, tb, tipo)}</div></div>`;
   };
-  corpo += lista("despesa") + lista("receita");
+  corpo += (soR ? "" : lista("despesa")) + (soD ? "" : lista("receita"));
   const top = mudancas.sort((a, b) => b.p - a.p).slice(0, 4);
-  if (top.length) corpo += `<div class="box"><h3>O que mais mudou</h3>${top.map((x) => `<div class="mud">${x.v}<span>${x.t}</span></div>`).join("")}</div>`;
-  corpo += `<p class="rel-nota">Valores em <span class="cinza">cinza</span> ainda não foram confirmados (é o valor cadastrado do fixo).${S.d.fixos.some((f) => f.varia) ? " Os de valor previsto (média) contam a média até você confirmar; confirmados, valem o valor real." : ""}</p>`;
+  if (top.length) corpo += `<div class="box"><h3>O que mais mudou<span>${mesCurto(ant)} → ${mesCurto(ref)}</span></h3>${top.map((x) => `<div class="mud">${x.v}<span>${x.t}</span></div>`).join("")}</div>`;
+  corpo += `<p class="rel-nota">Toque num fixo para ver o mês a mês dele. Valores em <span class="cinza">cinza</span> ainda não foram confirmados (é o valor cadastrado do fixo).${S.d.fixos.some((f) => f.varia) ? " Os de valor previsto (média) contam a média até você confirmar; confirmados, valem o valor real." : ""}</p>`;
+  return { k, corpo };
+}
+// Um recorrente só: valor de cada mês (real, previsto ou pulado)
+function relUmFixo(P, f) {
+  if (!f) return { k: "", corpo: `<p class="vazio">Recorrente não encontrado.</p>` };
+  const am = mesAtual(), varios = variosMeses(P), ref = P.mes || (P.meses.includes(am) ? am : P.meses[P.meses.length - 1]);
+  const meses = varios ? P.meses : Array.from({ length: 6 }, (_, i) => somaMes(ref, i - 5));
+  const rows = cortarInicio(meses.map((m) => { const x = valorFixoMes(f, m); return { m, v: x ? x.v : 0, st: x ? x.st : "" }; }), [{ k: "v" }]).filter((x) => x.st || x.m >= f.inicio);
+  const c = cat(f.cat), real = rows.filter((x) => x.st), md = mediaMeses(rows.filter((x) => x.st && x.st !== "pulou"), "v");
+  const xr = valorFixoMes(f, ref);
+  const stTxt = (st) => (st === "ok" ? "real" : st === "prev" ? (f.varia ? "média" : "previsto") : st === "pulou" ? "pulou" : "—");
+  const k = `<div class="rvd rvd-l"><div><small>${esc(f.nota || c.nome)}${varios ? " · média por mês" : ` · ${mesCurto(ref)}.`}</small><b class="num ${f.tipo === "receita" ? "vd" : ""}">${fmt(varios ? md : xr ? xr.v : 0)}</b></div></div>
+    <div class="livre-pct">${varios ? `no período: ${fmt(real.reduce((t, x) => t + x.v, 0))}` : xr ? stTxt(xr.st) : "fora do período do recorrente"} · ${f.tipo === "receita" ? "receita" : "despesa"} ${f.varia ? `com valor previsto (média ${fmt(f.valor)})` : `fixa de ${fmt(f.valor)}`}</div>`;
+  let corpo = `<div class="box"><table class="ano"><tr><th>Mês</th><th>Valor</th><th>Situação</th></tr>${rows.map((x) => `<tr class="${x.m === am ? "atual" : ""}" data-irmes="${x.m}"><td>${mesCurto(x.m)}${x.m.slice(0, 4) !== am.slice(0, 4) ? "/" + x.m.slice(2, 4) : ""}</td><td class="num ${x.st === "prev" ? "cz" : ""}">${x.st && x.st !== "pulou" ? fmt(x.v) : "—"}</td><td>${stTxt(x.st)}</td></tr>`).join("")}
+    <tr class="tot"><td>Média</td><td class="num">${fmt(md)}</td><td></td></tr></table></div>
+    <div class="box"><h3>Como está cadastrado</h3>${linhaValor(f.varia ? "Valor médio" : "Valor", fmt(f.valor))}${linhaValor(f.varia ? "Dia previsto" : "Todo dia", String(f.dia))}
+      ${linhaValor("Começa em", nomeMes(f.inicio))}${f.fim ? linhaValor("Último mês", nomeMes(somaMes(f.fim, -1))) : ""}
+      ${linhaValor(f.tipo === "receita" ? "Entra em" : "Pago com", esc(temCartao(f.cartao) ? cartao(f.cartao).nome : (S.d.contas.find((x) => x.id === f.conta) || { nome: "—" }).nome))}</div>
+    <button class="btn contorno" style="margin-top:12px" data-editfixo="${f.id}">Editar recorrente</button>`;
   return { k, corpo };
 }
 
-/* --- 5. Comparar meses --- */
-function relComp(P, det) {
-  const meses = P.mes ? Array.from({ length: 6 }, (_, i) => somaMes(P.mes, i - 5)) : P.meses;
-  if (det === "fixos") return relFixos(P, meses);
-  const val = (ym) => {
-    if (det.startsWith("cat:")) { const v = S.d.lancs.filter((l) => l.cat === det.slice(4) && l.data.startsWith(ym) && (l.tipo === "despesa" || l.tipo === "receita")).reduce((t, l) => t + l.valor, 0); return { r: 0, d: v }; }
-    const r = resumoMes(ym); return { r: det === "des" ? 0 : r.rec, d: det === "rec" ? 0 : r.des };
-  };
-  let comecou = false;
-  const linhas = meses.map((m) => ({ m, ...val(m) })).filter((x) => { if (!comecou && !x.r && !x.d && x.m < mesAtual()) return false; comecou = true; return true; });
-  const tR = linhas.reduce((t, x) => t + x.r, 0), tD = linhas.reduce((t, x) => t + x.d, 0), n = Math.max(1, linhas.filter((x) => x.r || x.d).length);
-  const soCat = det.startsWith("cat:"), soD = det === "des" || soCat, soR = det === "rec";
-  const k = `<div class="kps">${soD ? "" : kpi("Receitas", fmt(tR), `média ${fmt(tR / n)}`)}${soR ? "" : kpi(soCat ? cat(det.slice(4)).nome : "Despesas", fmt(tD), `média ${fmt(tD / n)}`)}
-    ${soD || soR ? kpi("Meses", String(n), "com movimento") : kpi("Resultado", `${tR - tD < 0 ? "− " : ""}${fmt(Math.abs(tR - tD))}`, tR - tD < 0 ? "gastou mais" : "sobrou", tR - tD < 0 ? "verm" : "verde")}</div>`;
-  const mx = Math.max(1, ...linhas.map((x) => Math.max(x.r, x.d)));
-  let corpo = `<div class="box"><h3>Mês a mês<span>${soD ? "" : `<i class="lg r"></i>Receitas `}${soR ? "" : `<i class="lg d"></i>${soCat ? "Gasto" : "Despesas"}`}</span></h3>
-    <div class="grafb gb-mini">${linhas.map((x) => `<button class="gm ${x.m === mesAtual() ? "on" : ""}" data-irmes="${x.m}"><span class="p">${soD ? "" : `<i class="r" style="height:${(x.r / mx) * 100}%"></i>`}${soR ? "" : `<i class="d" style="height:${(x.d / mx) * 100}%"></i>`}</span><small>${mesCurto(x.m)}</small></button>`).join("")}</div></div>
-    <div class="box"><table class="ano"><tr><th>Mês</th>${soD ? "" : "<th>Receitas</th>"}${soR ? "" : `<th>${soCat ? "Gasto" : "Despesas"}</th>`}${soD || soR ? "" : "<th>Resultado</th>"}</tr>
-    ${linhas.map((x) => { const d = x.r - x.d; return `<tr class="${x.m === mesAtual() ? "atual" : ""}" data-irmes="${x.m}"><td>${mesCurto(x.m)}${x.m.slice(0, 4) !== mesAtual().slice(0, 4) ? "/" + x.m.slice(2, 4) : ""}</td>${soD ? "" : `<td class="num">${x.r ? fmt(x.r) : "—"}</td>`}${soR ? "" : `<td class="num">${x.d ? fmt(x.d) : "—"}</td>`}${soD || soR ? "" : `<td class="num ${d < 0 ? "neg" : ""}">${x.r || x.d ? (d < 0 ? "− " : "") + fmt(Math.abs(d)) : "—"}</td>`}</tr>`; }).join("")}</table></div>`;
-  const comMov = linhas.filter((x) => x.r || x.d);
-  if (comMov.length > 1) {
-    const chave = soD ? (x) => -x.d : soR ? (x) => x.r : (x) => x.r - x.d;
-    const melhor = comMov.reduce((a, b) => (chave(b) > chave(a) ? b : a)), pior = comMov.reduce((a, b) => (chave(b) < chave(a) ? b : a));
-    const fv = (x) => soD ? fmt(x.d) : soR ? fmt(x.r) : `${x.r - x.d < 0 ? "− " : "+ "}${fmt(Math.abs(x.r - x.d))}`;
-    let maiorCat = "";
-    if (!soCat && !soR) { const o = {}; for (const l of S.d.lancs) if (l.tipo === "despesa" && meses.includes(l.data.slice(0, 7))) o[l.cat] = (o[l.cat] || 0) + l.valor; const top = Object.entries(o).sort((a, b) => b[1] - a[1])[0]; if (top) maiorCat = linhaValor("Onde mais gastou", `${esc(cat(top[0]).nome)} · ${fmt(top[1])}`, "", "categoria do período"); }
-    corpo += `<div class="box"><h3>Destaques</h3>${linhaValor("Melhor mês", `${mesCurto(melhor.m)} · ${fv(melhor)}`, "pos", soD ? "gastou menos" : soR ? "recebeu mais" : "sobrou mais")}
-      ${linhaValor("Pior mês", `${mesCurto(pior.m)} · ${fv(pior)}`, "neg", soD ? "gastou mais" : soR ? "recebeu menos" : "gastou mais")}${maiorCat}</div>`;
-  }
-  if (!det && S.d.fixos.some((f) => f.tipo === "despesa")) {
-    const ref = P.mes || (meses.includes(mesAtual()) ? mesAtual() : meses[meses.length - 1]);
-    const fx = totFixos(ref, "despesa"), fa = totFixos(somaMes(ref, -1), "despesa"), dt = resumoMes(ref).des;
-    corpo += `<button class="box fx-resumo" data-det="fixos"><span class="mm"><b>Fixos de ${mesCurto(ref)}.: ${fmtR(fx)}</b>
-      <small>${dt ? Math.round((fx / dt) * 100) : 0}% das despesas · ${mesCurto(somaMes(ref, -1))}.: ${fmt(fa)}</small></span><span class="fx-ver">ver fixos ${ic("chevron-right")}</span></button>`;
-  }
-  return { k, corpo };
-}
-
-// Opções do 3º filtro (Detalhe), conforme o relatório
+// 2º filtro: escolher o assunto
+const escolherAssunto = (atual) => escolher("O que você quer analisar?", RELS.map(([valor, rotulo, icone, sub]) => ({ valor, rotulo, icone, sub })), atual);
+// Opções do 3º filtro ("Filtrar por"), conforme o assunto
 function opcoesDetalhe(rel) {
   const cats = (tipo) => S.d.categorias.filter((c) => c.tipo === tipo).map((c) => ({ valor: "cat:" + c.id, rotulo: c.nome, icone: c.icone, grupo: "Uma categoria" }));
-  if (rel === "gastos") return [{ valor: "", rotulo: "Todas as categorias", icone: "list" }, { valor: "cartao", rotulo: "Só no cartão de crédito", icone: "credit-card" }, { valor: "vista", rotulo: "Só à vista (débito, Pix, dinheiro)", icone: "arrow-left-right" }, ...cats("despesa")];
+  if (rel === "resumo") return [{ valor: "", rotulo: "Tudo", icone: "chart-pie" }];
+  if (rel === "gastos") return [{ valor: "", rotulo: "Tudo", icone: "list", sub: "Todos os gastos do período" },
+    { valor: "fixos", rotulo: "Só fixos", icone: "repeat", sub: "Aluguel, parcelas, compras do mês (média)…", grupo: "Tipo de gasto" }, { valor: "var", rotulo: "Só variáveis", icone: "shopping-bag", sub: "O que não é recorrente", grupo: "Tipo de gasto" },
+    ...(S.d.cartoes.length > 1 ? [{ valor: "cartao", rotulo: "Todos os cartões de crédito", icone: "credit-card", grupo: "Forma de pagamento" }] : []),
+    ...S.d.cartoes.map((c) => ({ valor: "cart:" + c.id, rotulo: c.nome, icone: "credit-card", sub: "cartão de crédito", grupo: "Forma de pagamento" })),
+    { valor: "vista", rotulo: "Débito, Pix ou dinheiro", icone: "arrow-left-right", sub: "Saiu direto da conta", grupo: "Forma de pagamento" },
+    ...(S.d.contas.some(ehBenef) ? [{ valor: "benef", rotulo: "Benefícios (VA/VR)", icone: "ticket", grupo: "Forma de pagamento" }] : []), ...cats("despesa")];
+  if (rel === "receitas") return [{ valor: "", rotulo: "Todas", icone: "trending-up", sub: "Inclui recebimentos de planos e empréstimos" },
+    { valor: "fixas", rotulo: "Só fixas", icone: "repeat", sub: "Salário, vales…", grupo: "Tipo de receita" }, { valor: "avulsas", rotulo: "Só avulsas", icone: "plus", sub: "Extras, vendas, reembolsos…", grupo: "Tipo de receita" },
+    ...cats("receita"), ...S.d.contas.map((c) => ({ valor: "conta:" + c.id, rotulo: c.nome, icone: icConta(c), grupo: "Uma conta" }))];
+  if (rel === "fixos") return [{ valor: "", rotulo: "Receitas e despesas", icone: "repeat", sub: "Receitas fixas − despesas fixas = livre" }, { valor: "des", rotulo: "Só despesas fixas", icone: "receipt" }, { valor: "rec", rotulo: "Só receitas fixas", icone: "trending-up" },
+    ...S.d.fixos.map((f) => ({ valor: "fx:" + f.id, rotulo: f.nota || cat(f.cat).nome, icone: cat(f.cat).icone, sub: `${f.tipo === "receita" ? "receita" : "despesa"} · ${f.varia ? "média " : ""}${fmtR(f.valor)}`, grupo: "Um recorrente" }))];
   if (rel === "es") return [{ valor: "", rotulo: "Todas as contas", icone: "wallet" }, ...(S.d.contas.some(ehBenef) ? [{ valor: "benef", rotulo: "Benefícios (VA/VR)", icone: "ticket" }] : []), ...S.d.contas.map((c) => ({ valor: "conta:" + c.id, rotulo: c.nome, icone: icConta(c), grupo: "Uma conta" }))];
   if (rel === "cartoes") return [{ valor: "", rotulo: "Todos os cartões", icone: "credit-card" }, ...S.d.cartoes.map((c) => ({ valor: c.id, rotulo: c.nome, icone: "credit-card", grupo: "Um cartão" }))];
-  if (rel === "inv") return [{ valor: "", rotulo: "Todos os investimentos", icone: "piggy-bank" }, ...S.d.invest.map((i) => ({ valor: i.id, rotulo: i.nome, icone: i.icone, sub: i.tipo, grupo: "Um investimento" }))];
-  return [{ valor: "", rotulo: "Receitas e despesas", icone: "chart-line" }, { valor: "des", rotulo: "Só despesas", icone: "receipt" }, { valor: "rec", rotulo: "Só receitas", icone: "trending-up" }, { valor: "fixos", rotulo: "Fixos (recorrentes)", icone: "repeat" }, ...cats("despesa")];
+  return [{ valor: "", rotulo: "Todos os investimentos", icone: "piggy-bank" }, ...S.d.invest.map((i) => ({ valor: i.id, rotulo: i.nome, icone: i.icone, sub: i.tipo, grupo: "Um investimento" }))];
 }
 function rotuloDetalhe(rel, det) { const o = opcoesDetalhe(rel).find((x) => x.valor === det); return o ? o.rotulo : opcoesDetalhe(rel)[0].rotulo; }
+const RELF = { resumo: relResumo, gastos: relGastos, receitas: relReceitas, fixos: relFixos, es: relES, cartoes: relCartoes, inv: relInv };
 
 function telaRelatorios() {
   const f = filtroRel();
   if (!opcoesDetalhe(f.rel).some((o) => o.valor === f.det)) f.det = "";
   const P = infoPer(f.per), [, rot, ico] = relInfo(f.rel);
-  const r = { gastos: relGastos, es: relES, cartoes: relCartoes, inv: relInv, comp: relComp }[f.rel](P, f.det);
-  const pil = (attr, icone, txt, on = true) => `<button class="fp${on ? " on" : ""}" ${attr}>${ic(icone)}<span>${esc(txt)}</span>${ic("chevron-down", "seta")}</button>`;
+  const r = RELF[f.rel](P, f.det);
+  const pil = (attr, icone, cap, txt, on = true) => `<button class="fp fp2${on ? " on" : ""}" ${attr}>${ic(icone)}<span class="fp-t"><small>${cap}</small><span>${esc(txt)}</span></span>${ic("chevron-down", "seta")}</button>`;
   return `<header class="topo-n rel-topo"><div class="tn-linha"><div class="ola">Seus números<b>Relatórios</b></div><button class="ia-pill" data-ia>${ic("sparkles")}Enviar para IA</button></div>
-      <div class="fbar">${pil("data-fper", "calendar", P.rot)}${pil("data-frel", ico, rot)}${pil("data-fdet", "search", rotuloDetalhe(f.rel, f.det), !!f.det)}</div>
+      <div class="fbar">${pil("data-fper", "calendar", "Período", P.rot)}${pil("data-frel", ico, "Analisar", rot)}${pil("data-fdet", "search", "Filtrar por", rotuloDetalhe(f.rel, f.det), !!f.det)}</div>
       ${r.k}</header>
     <div class="conteudo rel-corpo" id="relcorpo">${r.corpo}
-      ${f.per.t !== "int" ? `<p class="rel-dica">${ic("arrow-left-right")}Deslize para o lado para ${f.per.t === "ano" ? "trocar de ano" : "trocar de mês"}</p>` : ""}</div>`;
+      ${f.per.t !== "int" && f.per.t !== "ult" ? `<p class="rel-dica">${ic("arrow-left-right")}Deslize para o lado para ${f.per.t === "ano" ? "trocar de ano" : "trocar de mês"}</p>` : ""}</div>`;
 }
-async function escolherPeriodo() {
-  const f = filtroRel(), atual = mesAtual(), ano = Number(atual.slice(0, 4));
+// Escolhe um período e devolve { t, ... } (ou null). base = período atual (para pré-preencher)
+async function pedirPeriodo(base) {
+  const f = { per: base }, atual = mesAtual(), ano = Number(atual.slice(0, 4));
   const ops = [
     { valor: "m0", rotulo: "Este mês", icone: "calendar", sub: nomeMes(atual) },
     { valor: "m-1", rotulo: "Mês passado", icone: "calendar", sub: nomeMes(somaMes(atual, -1)) },
@@ -1667,9 +1983,9 @@ async function escolherPeriodo() {
     { valor: "int", rotulo: "De uma data até outra…", icone: "calendar", grupo: "Personalizado" },
   ];
   const v = await escolher("Período", ops, null);
-  if (!v) return;
+  if (!v) return null;
   if (v[0] === "m" && v !== "mx") f.per = { t: "mes", ym: somaMes(atual, Number(v.slice(1))) };
-  else if (v === "mx") { const m = await escolherMes(f.per.ym || atual); if (!m) return; f.per = { t: "mes", ym: m }; }
+  else if (v === "mx") { const m = await escolherMes(f.per.ym || atual); if (!m) return null; f.per = { t: "mes", ym: m }; }
   else if (v[0] === "u") f.per = { t: "ult", n: Number(v.slice(1)) };
   else if (v[0] === "a") f.per = { t: "ano", ano: ano + Number(v.slice(1)) };
   else {
@@ -1680,23 +1996,30 @@ async function escolherPeriodo() {
         <button class="btn preto" style="margin-top:14px">Ver período</button></form>`, { aoFechar: () => ok(resp) });
       $("[data-f]", el).onsubmit = (e) => { e.preventDefault(); const fd = new FormData(e.target); let de = fd.get("de"), ate = fd.get("ate"); if (de > ate) [de, ate] = [ate, de]; resp = { t: "int", de, ate }; fechar(); };
     });
-    if (!per) return; f.per = per;
+    if (!per) return null; f.per = per;
   }
-  guardarFiltro(); desenhar();
+  return f.per;
+}
+async function escolherPeriodo() {
+  const f = filtroRel(), per = await pedirPeriodo(f.per);
+  if (!per) return;
+  f.per = per; guardarFiltro(); desenhar();
 }
 ligar.relatorios = () => {
   const f = filtroRel();
   const ir = () => { guardarFiltro(); desenhar(); };
   $("[data-fper]").onclick = escolherPeriodo;
   $("[data-ia]").onclick = abrirEnviarIA;
-  $("[data-frel]").onclick = async () => { const v = await escolher("O que você quer ver?", RELS.map(([valor, rotulo, icone, sub]) => ({ valor, rotulo, icone, sub })), f.rel); if (v && v !== f.rel) { f.rel = v; f.det = ""; if (v === "comp" && f.per.t === "mes") f.per = { t: "ult", n: 6 }; ir(); } };
-  $("[data-fdet]").onclick = async () => { const v = await escolher("Detalhe", opcoesDetalhe(f.rel), f.det); if (v !== null && v !== undefined) { f.det = v; ir(); } };
+  $("[data-frel]").onclick = async () => { const v = await escolherAssunto(f.rel); if (v && v !== f.rel) { f.rel = v; f.det = ""; ir(); } };
+  $("[data-fdet]").onclick = async () => { const v = await escolher(`Filtrar ${relInfo(f.rel)[1].toLowerCase()} por`, opcoesDetalhe(f.rel), f.det); if (v !== null && v !== undefined) { f.det = v; ir(); } };
   // deslizar troca o período (mês ou ano)
   const mover = (d) => { if (f.per.t === "mes") f.per = { t: "mes", ym: somaMes(f.per.ym, d) }; else if (f.per.t === "ano") f.per = { t: "ano", ano: f.per.ano + d }; else return; ir(); };
   if (f.per.t !== "int") ligarDeslizar($("#relcorpo"), [-1, 0, 1], () => 0, (d) => mover(d));
   const corpo = $("#relcorpo");
   corpo.querySelectorAll("[data-det]").forEach((b) => (b.onclick = () => { f.det = b.dataset.det; ir(); scrollTo(0, 0); }));
-  corpo.querySelectorAll("[data-irmes]").forEach((b) => (b.onclick = () => { f.per = { t: "mes", ym: b.dataset.irmes }; if (f.rel === "comp") { f.rel = "gastos"; f.det = ""; } ir(); scrollTo(0, 0); }));
+  corpo.querySelectorAll("[data-irmes]").forEach((b) => (b.onclick = () => { f.per = { t: "mes", ym: b.dataset.irmes }; ir(); scrollTo(0, 0); }));
+  corpo.querySelectorAll("[data-irpara]").forEach((b) => (b.onclick = () => { const [r, d] = b.dataset.irpara.split("|"); f.rel = r; f.det = d || ""; ir(); scrollTo(0, 0); }));
+  corpo.querySelectorAll("[data-editfixo]").forEach((b) => (b.onclick = () => editarFixo(fixoPorId(b.dataset.editfixo), () => desenhar())));
   corpo.querySelectorAll("[data-lanc]").forEach((b) => (b.onclick = () => abrirLanc(b.dataset.lanc)));
   corpo.querySelectorAll("[data-abririnv]").forEach((b) => (b.onclick = abrirInvestimentos));
   corpo.querySelectorAll("[data-fatmes]").forEach((b) => (b.onclick = () => abrirFaturasMes(f.per.ym || mesAtual())));
@@ -1706,6 +2029,7 @@ ligar.relatorios = () => {
   corpo.querySelectorAll("[data-lista]").forEach((b) => (b.onclick = () => {
     const k = b.dataset.lista;
     if (k === "ben") return verLista("Benefícios (VA/VR)", relGastos.ben || [], P.rot);
+    if (k === "planos") return verLista("Planos e empréstimos recebidos", relReceitas.planos || [], P.rot);
     verLista(nomes[k], (relES.listas || {})[k] || [], P.rot);
   }));
   corpo.querySelectorAll("[data-listacat]").forEach((b) => (b.onclick = () => verLista(cat(b.dataset.listacat).nome, (relES.recCat || []).filter((l) => l.cat === b.dataset.listacat), P.rot)));
@@ -1947,6 +2271,9 @@ function abrirEditor(l, opc = {}) {
     : { tipo: "despesa", cat: null, expr: "", nota: "", data: hoje(), conta: S.d.contas[0]?.id, cartao: null, parcelas: 1, destino: S.d.contas[1]?.id, repetir: 0 };
   if (!fonte && S.mes !== mesAtual()) E.data = `${S.mes}-01`;
   if (opc.fixo) { const v = dataFixo(opc.fixo, opc.ym); E.data = v < hoje() ? v : hoje(); }
+  // ligação com um recorrente (editar um lançamento: "é o Salário de outubro")
+  const ligAntes = editando ? l.fixo || "" : "";
+  E.lig = ligAntes;
   if (E.conta && !S.d.contas.some((c) => c.id === E.conta)) E.conta = S.d.contas[0]?.id;
   if (E.cartao && !S.d.cartoes.some((c) => c.id === E.cartao)) E.cartao = null;
   // investimentos
@@ -2101,7 +2428,21 @@ function abrirEditor(l, opc = {}) {
     const parc = podeParc ? `<button class="chip" data-parc>${E.parcelas}x</button>` : "";
     const fatAuto = E.cartao ? faturaDe(E.cartao, E.data) : null, fatSel = E.fatMes || fatAuto;
     const fat = E.cartao ? `<button class="chip ${E.fatMes ? "cartao" : ""}" data-fat>${ic("calendar")}<span>Fatura ${MES3[Number(fatSel.slice(5)) - 1].replace(".", "")} · vence ${dataCurta(vencimentoData(E.cartao, fatSel))}</span></button>` : "";
-    box.innerHTML = pagoCom + parc + fat;
+    const podeLig = editando && !l.parc && (E.tipo === "despesa" || E.tipo === "receita") && S.d.fixos.some((f) => f.tipo === E.tipo);
+    const fxL = E.lig ? fixoPorId(E.lig) : null;
+    const lig = podeLig ? `<button class="chip ${fxL ? "cartao" : ""}" data-lig>${ic("repeat")}<span>${fxL ? esc(fxL.nota || cat(fxL.cat).nome) : "É de um recorrente?"}</span></button>` : "";
+    box.innerHTML = pagoCom + parc + fat + lig;
+    const bl = $("[data-lig]", box);
+    if (bl) bl.onclick = async () => {
+      const ym = E.data.slice(0, 7);
+      const ops = [{ valor: "-", rotulo: "Não é de um recorrente", icone: "x", sub: "Lançamento avulso" },
+        ...S.d.fixos.filter((f) => f.tipo === E.tipo).map((f) => { const ja = S.d.lancs.some((x) => x.fixo === f.id && x.id !== l.id && (x.fixoMes || x.data.slice(0, 7)) === ym);
+          return { valor: f.id, rotulo: f.nota || cat(f.cat).nome, icone: cat(f.cat).icone, grupo: "Ligar a um recorrente", sub: `conta como ${f.nota || cat(f.cat).nome} de ${nomeMes(ym)}${ja ? " · esse mês já tem um lançamento dele: os dois vão somar" : ""}` }; })];
+      const v = await escolher("Este lançamento é de um recorrente?", ops, E.lig || "-");
+      if (!v) return;
+      E.lig = v === "-" ? "" : v;
+      pintarChips();
+    };
     const bf = $("[data-fat]", box);
     if (bf) bf.onclick = async () => {
       const c = cartao(E.cartao);
@@ -2144,7 +2485,7 @@ function abrirEditor(l, opc = {}) {
   // Recorrente (repete todo mês)
   const btRep = $("[data-repetirmes]", el);
   const txtRep = (n) => (n === -1 ? "Todo mês" : n > 0 ? `${n}x` : "Recorrente");
-  const fixoLigado = () => (editando && l.fixo ? fixoPorId(l.fixo) : null);
+  const fixoLigado = () => (editando && E.lig ? fixoPorId(E.lig) : null);
   function pintarRepetir() {
     const fx = fixoLigado();
     const pode = !opc.fixo && E.tipo !== "transf" && E.tipo !== "invest" && E.parcelas === 1 && !(editando && l.parc);
@@ -2288,6 +2629,11 @@ function abrirEditor(l, opc = {}) {
       if (!base.fatMes) delete alvo.fatMes;
       if (!alvo.cartao && alvo.tipo !== "receita") delete alvo.parc;
       msg = "Alterações salvas.";
+      if (E.lig && (fixoPorId(E.lig) || {}).tipo !== alvo.tipo) E.lig = ""; // mudou de despesa para receita (ou o contrário)
+      if (E.lig !== ligAntes) {
+        if (E.lig) { alvo.fixo = E.lig; alvo.fixoMes = alvo.data.slice(0, 7); const fx = fixoPorId(E.lig); msg = `Ligado ao recorrente: conta como ${fx.nota || cat(fx.cat).nome} de ${nomeMes(alvo.fixoMes)}.`; }
+        else { delete alvo.fixo; delete alvo.fixoMes; msg = "Desligado do recorrente: agora é um lançamento avulso."; }
+      }
       if (E.repetir && !fixoLigado() && !alvo.parc && alvo.tipo !== "transf") {
         const f = { id: novoId(), tipo: alvo.tipo, cat: alvo.cat, valor: alvo.valor, nota: alvo.nota, conta: alvo.conta, cartao: alvo.cartao, dia: Number(alvo.data.slice(8)), inicio: alvo.data.slice(0, 7) };
         if (E.repetir > 0) f.fim = somaMes(f.inicio, E.repetir);
@@ -3263,8 +3609,9 @@ function editarFixo(f, depois) {
     <div class="dois"><label data-rotvalor>Valor (R$)<input name="valor" inputmode="decimal" value="${nf2.format(f.valor / 100)}" required></label>
     <label data-rotdia>Todo dia<select name="dia">${dias}</select></label></div>
     <label>Categoria<select name="cat">${cats.map((c) => `<option value="${c.id}" ${c.id === f.cat ? "selected" : ""}>${esc(c.nome)}</option>`).join("")}</select></label>
+    <label>Começa em<select name="inicio">${(() => { const am = mesAtual(); let m = f.inicio < somaMes(am, -24) ? f.inicio : somaMes(am, -24); const o = []; for (; m <= somaMes(am, 12); m = somaMes(m, 1)) o.push(`<option value="${m}" ${m === f.inicio ? "selected" : ""}>${nomeMes(m)}</option>`); return o.join(""); })()}</select></label>
     <p style="font-size:13px;color:#777;margin:-4px 0 6px" data-dicafx></p>
-    <p style="font-size:13px;color:#777;margin:0 0 12px">As mudanças valem para os próximos meses. O que já foi confirmado não muda.</p>
+    <p style="font-size:13px;color:#777;margin:0 0 12px">As mudanças valem para os próximos meses. O que já foi confirmado não muda. Se puser o começo num mês que já passou e já lançou aquele mês, edite o lançamento e ligue ele a este recorrente (botão do recorrente no lançamento) para não contar duas vezes.</p>
     <p class="erro" data-e></p>
     <div class="botoes"><button class="btn preto">Salvar</button><button type="button" class="btn perigo" data-parar>Parar de repetir</button></div></form>`);
   const modo = ligarModoFixo(el, f);
@@ -3272,8 +3619,9 @@ function editarFixo(f, depois) {
     e.preventDefault();
     const fm = e.target, v = lerValor(fm.valor.value);
     if (!(v > 0)) return ($("[data-e]", el).textContent = "Digite um valor válido.");
-    const vr = modo();
-    Object.assign(f, { nota: fm.nota.value.trim(), valor: v, dia: Number(fm.dia.value), cat: fm.cat.value });
+    const vr = modo(), ini = fm.inicio.value;
+    if (f.fim && ini >= f.fim) return ($("[data-e]", el).textContent = `Ele termina em ${nomeMes(somaMes(f.fim, -1))}: o começo tem que ser antes.`);
+    Object.assign(f, { nota: fm.nota.value.trim(), valor: v, dia: Number(fm.dia.value), cat: fm.cat.value, inicio: ini });
     if (vr) f.varia = vr; else delete f.varia;
     await salvar(); fechar(); aviso("Recorrente atualizado."); setTimeout(depois, 0);
   };

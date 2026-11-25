@@ -1026,3 +1026,26 @@ label.tog { display: flex !important; flex-direction: row; align-items: center; 
 .rvd.rvd-l { gap: 8px; } .rvd.rvd-l b { font-size: 20px; } .rvd.rvd-l .menos { font-size: 20px; }
 .rvd b.lv { color: #FFD166; } .rvd b.lv.neg { color: #F59E9E; }
 .livre-pct { font-size: 12.5px; color: var(--noite-tx); margin-top: 8px; }
+
+/* v3.30 — filtros "Período · Analisar · Filtrar por", mês a mês, Resumo e Receitas */
+.fp.fp2 { padding: 5px 10px 6px; border-radius: 14px; min-width: 0; }
+.fp2 .fp-t { display: flex; flex-direction: column; align-items: flex-start; text-align: left; min-width: 0; line-height: 1.15; }
+.fp2 .fp-t small { font-size: 10.5px; font-weight: 500; opacity: .7; }
+.fp2 .fp-t span { font-size: 13.5px; }
+.k-media { font-size: 12.5px; font-weight: 600; color: #fff; margin: 12px 0 -4px; }
+.rel-topo .rvd-l + .livre-pct, .rel-topo .k-media + .rvd { margin-top: 6px; }
+table.ano small.prev-m { font-size: 10.5px; color: #aaa; margin-left: 4px; font-weight: 400; }
+table.ano td.cz { color: #aaa; }
+.barx { height: 10px; border-radius: 9px; background: #EEF1F5; display: flex; overflow: hidden; margin: 4px 0 6px; }
+.barx i { display: block; height: 100%; }
+.rl .pill { font-size: 11.5px; font-weight: 600; border-radius: 99px; padding: 2px 7px; background: #EEF1F5; color: #666; margin-left: 4px; }
+button.box.rs-fx { display: block; width: 100%; text-align: left; font: inherit; color: inherit; border: 0; }
+.lvs[data-det] { cursor: pointer; }
+.ia-sels { display: flex; flex-direction: column; gap: 8px; margin-top: 10px; }
+.ia-sel { display: flex; align-items: center; gap: 10px; width: 100%; text-align: left; border: 1.5px solid #E3E6EB; border-radius: 14px; padding: 8px 12px; background: #fff; font: inherit; color: inherit; }
+.ia-sel svg.ic { width: 18px; height: 18px; color: var(--laranja); flex: none; }
+.ia-sel span { flex: 1; min-width: 0; } .ia-sel small { display: block; font-size: 11.5px; color: #888; } .ia-sel b { font-size: 15px; display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ia-sel em { font-style: normal; font-size: 13px; font-weight: 600; color: var(--laranja); }
+.ia-obs { font-size: 12px; color: #888; margin: 6px 2px 0; }
+.ia-vai { background: #F6F8FB; border-radius: 12px; padding: 9px 12px; margin-top: 10px; font-size: 13px; color: #444; line-height: 1.5; }
+.ia-vai b { display: block; font-size: 12px; color: #888; }
