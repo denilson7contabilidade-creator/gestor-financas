@@ -1,7 +1,7 @@
 "use strict";
 /* Gestor de Finanças — app instalável, dados guardados só no aparelho e criptografados. */
 
-const VERSAO_APP = "3.30";
+const VERSAO_APP = "3.31";
 const $ = (s, el = document) => el.querySelector(s);
 const esc = (t) => String(t ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const ic = (n) => `<svg class="ic" viewBox="0 0 24 24">${ICONES[n] || ICONES["circle-ellipsis"]}</svg>`;
@@ -1350,7 +1350,7 @@ ${[...f.itens].sort((a, b) => a.data.localeCompare(b.data)).map((l) => `${l.data
   } else {
     const g = dadosGastos(P, ""), r = dadosReceitas(P, "");
     L.push(`TOTAIS DO PERÍODO: entrou ${R(r.total)}; saiu ${R(g.total)}; sobrou ${R(r.total - g.total)}`);
-    if (!P.int) { const df = P.meses.reduce((t, m) => t + totFixos(m, "despesa"), 0), rf = P.meses.reduce((t, m) => t + totFixos(m, "receita"), 0); L.push(`FIXOS: receitas fixas ${R(rf)}; despesas fixas ${R(df)}; livre ${R(rf - df)}; despesas variáveis ${R(Math.max(0, g.total - df))}`); }
+    if (!P.int) { const df = P.meses.reduce((t, m) => t + totFixos(m, "despesa"), 0), rf = P.meses.reduce((t, m) => t + totFixos(m, "receita"), 0); L.push(`FIXOS: receitas fixas ${R(rf)}; despesas fixas ${R(df)}; livre ${R(rf - df)}; despesas variáveis ${R(somaV(g.itens.filter((x) => !ehDeFixo(x))))} (recorrente parcelado conta inteiro nos fixos do mês da compra)`); }
     if (variosMeses(P)) L.push(`MÊS A MÊS (mês; entrou; saiu; sobrou)\n${P.meses.map((m) => { const pm = perDoMes(P, m), a = dadosReceitas(pm, "").total, b = dadosGastos(pm, "").total; return `${m}; ${R(a)}; ${R(b)}; ${R(a - b)}`; }).join("\n")}`);
     const por = {}; for (const x of [...g.itens, ...g.fixos]) por[cat(x.cat).nome] = (por[cat(x.cat).nome] || 0) + x.valor;
     L.push(`\nGASTOS POR CATEGORIA\n${Object.entries(por).sort((a, b) => b[1] - a[1]).map(([k, v]) => `${k}: ${R(v)}`).join("\n")}\n`);
@@ -1669,11 +1669,12 @@ function relResumo(P) {
   // fixos x variáveis e o livre
   if (!P.int && S.d.fixos.length) {
     const df = P.meses.reduce((s, m) => s + totFixos(m, "despesa"), 0), rf = P.meses.reduce((s, m) => s + totFixos(m, "receita"), 0);
-    const vr = Math.max(0, t.des - df), td = Math.max(1, df + vr), lv = rf - df, n = variosMeses(P) ? Math.max(1, linhas.length) : 1;
+    const vr = somaV(t.g.itens.filter((x) => !ehDeFixo(x))), td = Math.max(1, df + vr), lv = rf - df, n = variosMeses(P) ? Math.max(1, linhas.length) : 1;
     corpo += `<button class="box rs-fx" data-irpara="fixos|"><h3>Fixos x variáveis${variosMeses(P) ? "<span>média por mês</span>" : ""}</h3>
       <div class="barx"><i style="width:${(df / td) * 100}%;background:var(--azul, #2B7BBF)"></i><i style="width:${(vr / td) * 100}%;background:#F2B544"></i></div>
       ${linhaValor("Fixos", `${fmt(df / n)} <span class="pill">${pct(df, td)}%</span>`, "", "aluguel, parcelas, compras do mês…")}${linhaValor("Variáveis", `${fmt(vr / n)} <span class="pill">${pct(vr, td)}%</span>`, "", "o que não se repete")}
-      ${linhaValor("<b>Livre depois dos fixos</b>", `${lv < 0 ? "− " : ""}${fmt(Math.abs(lv / n))}`, lv < 0 ? "neg" : "pos", "receitas fixas − despesas fixas")}</button>`;
+      ${linhaValor("<b>Livre depois dos fixos</b>", `${lv < 0 ? "− " : ""}${fmt(Math.abs(lv / n))}`, lv < 0 ? "neg" : "pos", "receitas fixas − despesas fixas")}
+      ${S.d.lancs.some((l) => l.fixo && l.parc) ? `<p class="rel-nota" style="margin:8px 0 0">Recorrente confirmado parcelado conta inteiro nos fixos do mês da compra; no “Saiu” e em Gastos, cada parcela conta no mês em que cai.</p>` : ""}</button>`;
   }
   if (linhas.length) corpo += blocoMesAMes(linhas, cols);
   // onde mais gastou
@@ -2424,7 +2425,7 @@ function abrirEditor(l, opc = {}) {
     if (E.tipo === "transf" || E.tipo === "invest") { box.innerHTML = ""; pintarRepetir(); return; }
     const pagoCom = E.cartao ? `<button class="chip cartao" data-pg>${ic("credit-card")}<span>${esc(cartao(E.cartao).nome)}</span></button>`
       : `<button class="chip" data-pg>${ic(icConta(conta(E.conta)))}<span>${esc(conta(E.conta).nome)}</span></button>`;
-    const podeParc = (E.cartao || E.tipo === "receita") && !(editando && l.parc) && !opc.fixo && !E.repetir;
+    const podeParc = (E.cartao || (E.tipo === "receita" && !opc.fixo)) && !(editando && l.parc) && !E.repetir;
     const parc = podeParc ? `<button class="chip" data-parc>${E.parcelas}x</button>` : "";
     const fatAuto = E.cartao ? faturaDe(E.cartao, E.data) : null, fatSel = E.fatMes || fatAuto;
     const fat = E.cartao ? `<button class="chip ${E.fatMes ? "cartao" : ""}" data-fat>${ic("calendar")}<span>Fatura ${MES3[Number(fatSel.slice(5)) - 1].replace(".", "")} · vence ${dataCurta(vencimentoData(E.cartao, fatSel))}</span></button>` : "";
@@ -2620,8 +2621,10 @@ function abrirEditor(l, opc = {}) {
     if (editando && parcelado && !l.parc) {
       // lançamento existente passou a ser parcelado: vira N parcelas
       const n = E.parcelas, cada = Math.floor(r.valor / n), sobra = r.valor - cada * n, g = novoId();
+      const ligF = E.lig && (fixoPorId(E.lig) || {}).tipo === E.tipo ? E.lig : "";
+      const lig = ligF ? { fixo: ligF, fixoMes: ligF === l.fixo && l.fixoMes ? l.fixoMes : E.data.slice(0, 7) } : {};
       S.d.lancs = S.d.lancs.filter((x) => x.id !== l.id);
-      for (let i = 0; i < n; i++) S.d.lancs.push({ ...base, id: novoId() + i, valor: cada + (i === 0 ? sobra : 0), data: somaMesData(E.data, i), parc: { n: i + 1, t: n, g }, ...(base.fatMes ? { fatMes: somaMes(base.fatMes, i) } : {}) });
+      for (let i = 0; i < n; i++) S.d.lancs.push({ ...base, ...lig, id: novoId() + i, valor: cada + (i === 0 ? sobra : 0), data: somaMesData(E.data, i), parc: { n: i + 1, t: n, g }, ...(base.fatMes ? { fatMes: somaMes(base.fatMes, i) } : {}) });
       msg = E.tipo === "receita" ? `Alterado para receber em ${n}x de ${fmtR(cada)}.` : `Alterado para o cartão em ${n}x de ${fmtR(cada)}.`;
     } else if (editando) {
       const alvo = S.d.lancs.find((x) => x.id === l.id);
@@ -2642,8 +2645,10 @@ function abrirEditor(l, opc = {}) {
       }
     } else if (parcelado) {
       const n = E.parcelas, cada = Math.floor(r.valor / n), sobra = r.valor - cada * n, g = novoId();
-      for (let i = 0; i < n; i++) S.d.lancs.push({ ...base, id: novoId() + i, valor: cada + (i === 0 ? sobra : 0), data: somaMesData(E.data, i), parc: { n: i + 1, t: n, g }, ...(base.fatMes ? { fatMes: somaMes(base.fatMes, i) } : {}) });
-      msg = E.tipo === "receita" ? `Receita lançada em ${n}x de ${fmtR(cada)}, uma por mês.` : `Lançado no cartão em ${n}x. Não saiu do saldo.`;
+      // confirmando um recorrente: todas as parcelas ficam ligadas a ele no mês da compra (o fixo daquele mês = a compra inteira)
+      const lig = opc.fixo ? { fixo: opc.fixo.id, fixoMes: opc.ym } : {};
+      for (let i = 0; i < n; i++) S.d.lancs.push({ ...base, ...lig, id: novoId() + i, valor: cada + (i === 0 ? sobra : 0), data: somaMesData(E.data, i), parc: { n: i + 1, t: n, g }, ...(base.fatMes ? { fatMes: somaMes(base.fatMes, i) } : {}) });
+      msg = opc.fixo ? `Confirmado em ${n}x de ${fmtR(cada)} no cartão. Nos fixos de ${nomeMes(opc.ym)} conta a compra inteira.` : E.tipo === "receita" ? `Receita lançada em ${n}x de ${fmtR(cada)}, uma por mês.` : `Lançado no cartão em ${n}x. Não saiu do saldo.`;
     } else {
       const novo = { ...base, id: novoId() };
       if (opc.fixo) { novo.fixo = opc.fixo.id; novo.fixoMes = opc.ym; msg = "Confirmado."; }
