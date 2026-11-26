@@ -1,7 +1,7 @@
 "use strict";
 /* Gestor de Finanças — app instalável, dados guardados só no aparelho e criptografados. */
 
-const VERSAO_APP = "3.31";
+const VERSAO_APP = "3.32";
 const $ = (s, el = document) => el.querySelector(s);
 const esc = (t) => String(t ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const ic = (n) => `<svg class="ic" viewBox="0 0 24 24">${ICONES[n] || ICONES["circle-ellipsis"]}</svg>`;
@@ -2045,10 +2045,9 @@ function verFaturas(cid, mesIni) {
     $("[data-c]", el).innerHTML = `<h2>${esc(cartao(cid).nome)}</h2>
       <div class="ano-nav"><button data-m="-1">${ic("chevron-left")}</button><span>Fatura de ${nomeMes(ym)}</span><button data-m="1">${ic("chevron-right")}</button></div>
       <p style="text-align:center;color:#777;margin:0 0 4px;font-size:14px">Vence ${dataCurta(vencimentoData(cid, ym))}</p>
-      <div style="text-align:center;font-size:28px;font-weight:700" class="num">${fmtR(f.total)}</div>
-      <p style="text-align:center;margin:2px 0 12px;font-size:14px;color:#555">${f.total === 0 ? "Sem compras" : f.falta === 0 ? "Fatura paga" : f.pago ? `Pago ${fmtR(f.pago)} · falta ${fmtR(f.falta)}` : "Não paga"}</p>
+      ${destaqueFatura(f.total, f.pago, f.falta, "", pagamentosFatura(cid, ym).map((l) => dataCurta(l.data)).join(", "))}
       <div style="margin:0 -18px">${f.itens.map((l) => itemLanc(l, true)).join("") || `<p class="vazio" style="padding:20px">Nenhuma compra nesta fatura.</p>`}</div>
-      <div class="botoes" style="margin-top:14px">${f.falta > 0 ? `<button class="btn preto" data-pg>Pagar esta fatura</button>` : ""}</div>`;
+      <div class="botoes" style="margin-top:14px">${f.falta > 0 ? `<button class="btn preto" data-pg>${f.pago ? `Pagar ${fmtR(f.falta)}` : "Pagar esta fatura"}</button>` : ""}</div>`;
     el.querySelectorAll("[data-m]").forEach((b) => (b.onclick = () => { ym = somaMes(ym, Number(b.dataset.m)); pintar(); }));
     el.querySelectorAll("[data-lanc]").forEach((b) => (b.onclick = () => abrirLanc(b.dataset.lanc)));
     const pg = $("[data-pg]", el); if (pg) pg.onclick = () => pagarFatura(cid, ym);
@@ -2087,6 +2086,17 @@ function usoCartaoMensal(ate) {
 }
 
 // Folha aberta por "Faturas cartões" no Início: as faturas que vencem no mês exibido
+// Pagamentos feitos numa fatura
+const pagamentosFatura = (cid, ym) => S.d.lancs.filter((l) => l.tipo === "fatura" && l.cartao === cid && l.fatura === ym).sort((a, b) => a.data.localeCompare(b.data));
+// Destaque da fatura: com pagamento parcial, o número grande é o que falta pagar; embaixo, o total e o pago
+function destaqueFatura(total, pago, falta, rotulo, datasPg) {
+  if (total === 0) return `<div class="fat-dest"><div class="fd-v num">${fmtR(0)}</div><p class="fd-s">${rotulo ? "Nenhuma compra" : "Sem compras"}</p></div>`;
+  if (falta === 0) return `<div class="fat-dest"><p class="fd-l">${rotulo || ""}</p><div class="fd-v num">${fmtR(total)}</div><p class="fd-s">${rotulo ? "Tudo pago" : "Fatura paga"}</p></div>`;
+  const pg = Math.min(pago, total);
+  return `<div class="fat-dest"><p class="fd-l">${rotulo ? rotulo + " · " : ""}falta pagar</p><div class="fd-v num">${fmtR(falta)}</div>
+    <p class="fd-s">${pg ? `Total${rotulo ? "" : " da fatura"} ${fmtR(total)} · pago ${fmtR(pg)}${datasPg ? ` em ${datasPg}` : ""}` : `Total ${fmtR(total)} · nada pago ainda`}</p>
+    ${pg ? `<div class="fd-barra"><i style="width:${Math.min(100, (pg / total) * 100)}%"></i></div>` : ""}</div>`;
+}
 function abrirFaturasMes(mesIni) {
   let ym = mesIni;
   const el = abrirCamada(`<div data-fatmesc></div>`, { aoFechar: () => desenhar() });
@@ -2096,15 +2106,15 @@ function abrirFaturasMes(mesIni) {
     const pago = fs.reduce((t, x) => t + Math.min(x.f.pago, x.f.total), 0);
     const aberta = (cid) => faturaAberta(cid) === ym;
     const etq = (x) => x.f.total === 0 ? `<span class="etiqueta">Sem compras</span>` : x.f.falta === 0 ? `<span class="etiqueta paga">Paga</span>`
-      : aberta(x.c.id) ? `<span class="etiqueta aberta">Aberta</span>` : `<span class="etiqueta">Fechada</span>`;
+      : x.f.pago ? `<span class="etiqueta parcial">Pago em parte</span>` : aberta(x.c.id) ? `<span class="etiqueta aberta">Aberta</span>` : `<span class="etiqueta">Fechada</span>`;
     $("[data-fatmesc]", el).innerHTML = `<h2>Faturas dos cartões</h2>
       <div class="ano-nav"><button data-m="-1">${ic("chevron-left")}</button><span>Vencem em ${nomeMes(ym)}</span><button data-m="1">${ic("chevron-right")}</button></div>
-      <div style="text-align:center;font-size:28px;font-weight:700" class="num">${fmtR(total)}</div>
-      <p style="text-align:center;margin:2px 0 12px;font-size:14px;color:#555">${total === 0 ? "Nenhuma compra nessas faturas" : falta === 0 ? "Tudo pago" : pago ? `Pago ${fmtR(pago)} · falta ${fmtR(falta)}` : "Nada pago ainda"}</p>
+      ${destaqueFatura(total, pago, falta, "Todos os cartões")}
       <div class="cartao-box">${fs.map((x) => `<div class="fatura"><div class="cabf"><span class="bola">${ic("credit-card")}</span><div class="meio"><b>${esc(x.c.nome)}</b>
           <small style="display:block">Fecha dia ${x.c.fechamento} · vence ${dataCurta(vencimentoData(x.c.id, ym))} · ${x.f.itens.length} compra(s)</small></div></div>
-        <div class="valf num">${fmtR(x.f.total)}</div>${etq(x)}${x.f.pago && x.f.falta ? `<small> falta ${fmtR(x.f.falta)}</small>` : ""}
-        <div class="acoes"><button class="btn contorno" data-verfat="${x.c.id}">Ver compras</button>${x.f.falta > 0 ? `<button class="btn preto" data-pagar="${x.c.id}">Pagar fatura</button>` : ""}</div>
+        ${x.f.pago && x.f.falta ? `<div class="fat-vf"><div><small>Falta pagar</small><div class="valf num">${fmtR(x.f.falta)}</div></div><div class="fat-vf-d">${etq(x)}<small>Total ${fmtR(x.f.total)}<br>pago ${fmtR(Math.min(x.f.pago, x.f.total))}</small></div></div>`
+          : `<div class="valf num">${fmtR(x.f.total)}</div>${etq(x)}`}
+        <div class="acoes"><button class="btn contorno" data-verfat="${x.c.id}">Ver compras</button>${x.f.falta > 0 ? `<button class="btn preto" data-pagar="${x.c.id}">${x.f.pago ? `Pagar ${fmtR(x.f.falta)}` : "Pagar fatura"}</button>` : ""}</div>
         ${x.f.pago && x.f.falta ? `<button class="link" style="font-size:13.5px;margin-top:10px" data-quitar="${x.c.id}">Já paguei a fatura inteira (valor do banco diferente) → marcar como paga</button>` : ""}</div>`).join("")}</div>
       <p style="font-size:12.5px;color:#777;margin:10px 2px 0">Compras no cartão entram em “Despesas do mês” na data da compra, mas só saem do saldo quando você paga a fatura.</p>
       ${usoCartaoMensal(ym)}`;
@@ -2167,7 +2177,7 @@ function pagarFatura(cid, ym, existente) {
   const f = infoFatura(cid, ym);
   const valorIni = existente ? existente.valor : f.falta;
   const el = abrirCamada(`<h2>${existente ? "Pagamento de fatura" : "Pagar fatura"}</h2>
-    <p style="text-align:center;margin:-6px 0 16px;color:#555">${esc(cartao(cid).nome)} · fatura de ${nomeMes(ym)}<br>Total da fatura: <b>${fmtR(f.total)}</b></p>
+    <p style="text-align:center;margin:-6px 0 16px;color:#555">${esc(cartao(cid).nome)} · fatura de ${nomeMes(ym)}<br>${!existente && f.pago && f.falta ? `Falta pagar: <b>${fmtR(f.falta)}</b><br><small>Total ${fmtR(f.total)} · já pago ${fmtR(Math.min(f.pago, f.total))}</small>` : `Total da fatura: <b>${fmtR(f.total)}</b>`}</p>
     <form data-f>
       <label>Valor pago (R$)<input name="valor" inputmode="decimal" value="${valorIni ? nf2.format(valorIni / 100) : ""}" required></label>
       <div class="dois"><label>Pago com<select name="conta">${S.d.contas.map((c) => `<option value="${c.id}" ${existente && existente.conta === c.id ? "selected" : ""}>${esc(c.nome)}</option>`).join("")}</select></label>

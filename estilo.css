@@ -1049,3 +1049,16 @@ button.box.rs-fx { display: block; width: 100%; text-align: left; font: inherit;
 .ia-obs { font-size: 12px; color: #888; margin: 6px 2px 0; }
 .ia-vai { background: #F6F8FB; border-radius: 12px; padding: 9px 12px; margin-top: 10px; font-size: 13px; color: #444; line-height: 1.5; }
 .ia-vai b { display: block; font-size: 12px; color: #888; }
+
+/* v3.32 — fatura com pagamento parcial: destaque = falta pagar */
+.fat-dest { text-align: center; margin: 4px 0 12px; }
+.fat-dest .fd-l { font-size: 13px; color: #888; margin: 6px 0 0; }
+.fat-dest .fd-v { font-size: 28px; font-weight: 700; }
+.fat-dest .fd-s { font-size: 14px; color: #555; margin: 2px 0 0; }
+.fd-barra { height: 7px; border-radius: 9px; background: #EEF1F5; overflow: hidden; margin: 8px 30px 0; }
+.fd-barra i { display: block; height: 100%; background: #22A06B; border-radius: 9px; }
+.fat-vf { display: flex; justify-content: space-between; align-items: flex-end; gap: 10px; margin-top: 6px; }
+.fat-vf small { font-size: 12px; color: #888; }
+.fat-vf .valf { margin: 0; }
+.fat-vf-d { text-align: right; } .fat-vf-d small { display: block; margin-top: 4px; line-height: 1.35; }
+.etiqueta.parcial { background: #FFF3D6; color: #9A6B00; }
